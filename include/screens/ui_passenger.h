@@ -3,11 +3,10 @@
 
 #include "config.h"
 
+extern lv_obj_t* ui_passenger_screen;
+
 // Initialize the screen layout (List container + Header)
 void ui_passenger_init(void);
-
-// Load the passenger list screen to the display
-void ui_passenger_display(void);
 
 // Add a new clickable Tag (Button) to the list
 // This can be called from blynk_logic.cpp when a cloud trigger arrives

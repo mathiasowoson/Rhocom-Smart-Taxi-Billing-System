@@ -3,10 +3,9 @@
 
 #include "config.h"
 
-// Launch the Union screen
-void ui_goto_union_validation(void);
+extern lv_obj_t* ui_union_screen;
 
-// Internal helper to create the keypad
-void create_station_keypad(lv_obj_t * parent);
+// Launch the Union screen
+void ui_union_init(void);
 
 #endif

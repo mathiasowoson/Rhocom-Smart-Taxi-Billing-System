@@ -1,5 +1,5 @@
-#include "screens/ui_dashboard.h"
 #include "ui_manager.h"
+#include "screens/ui_dashboard.h"
 
 // Tell the compiler these are external CONSTANT arrays (how LVGL stores fonts)
 extern "C" {
@@ -12,14 +12,11 @@ lv_obj_t * speed_label = NULL;
 
 // Event handler for dashboard buttons
 static void dashboard_event_cb(lv_event_t * e) {
-    lv_obj_t * btn = lv_event_get_target(e);
-    int btn_id = (int)lv_event_get_user_data(e);
+    // Get the Enum directly from the button
+    ui_page_t target_page = (ui_page_t)(intptr_t)lv_event_get_user_data(e);
 
-    switch(btn_id) {
-        case 1: ui_goto_passenger_mgmt(); break; // PASSENGERS
-        case 2: ui_goto_union_validation(); break; // UNION/LEVY
-        // Add other cases as we build them
-    }
+    // Tell the manager to go there. No switch-case needed!
+    ui_goto_page(target_page);
 }
 
 void ui_dashboard_init(void) {
@@ -56,6 +53,16 @@ void ui_dashboard_init(void) {
 
     // 3. Helper to create buttons inside the grid
     const char * btn_names[] = {"PASSENGERS", "UNION/LEVY", "REPORTS", "SETTINGS", "HISTORY", "LOGOUT"};
+
+    // This array MAPS the button name to the Page ID
+    ui_page_t page_map[] = { 
+       UI_PAGE_PASSENGER, 
+       UI_PAGE_UNION, 
+       UI_PAGE_REPORTS, 
+       UI_PAGE_SETTINGS, 
+       UI_PAGE_HISTORY, 
+       UI_PAGE_LOGOUT 
+    };
     
     for(int i = 0; i < 6; i++) {
         int col = i % 2;
@@ -68,20 +75,16 @@ void ui_dashboard_init(void) {
         lv_obj_set_grid_cell(btn, LV_GRID_ALIGN_STRETCH, col, 1, LV_GRID_ALIGN_STRETCH, row, 1);
         
         // Pass the index (i+1) as user data so the callback knows which button was clicked
-        lv_obj_add_event_cb(btn, dashboard_event_cb, LV_EVENT_CLICKED, (void*)(i + 1));
+        lv_obj_add_event_cb(btn, dashboard_event_cb, LV_EVENT_CLICKED, (void*)page_map[i]);
 
         lv_obj_t * label = lv_label_create(btn);
         lv_label_set_text(label, btn_names[i]);
         lv_obj_set_style_text_font(label, &lv_font_montserrat_12, 0);
         lv_obj_center(label);
     }
+    
 }
 
-void ui_dashboard_display(void) {
-    if(ui_dashboard_screen) {
-        lv_scr_load(ui_dashboard_screen);
-    }
-}
 
 void ui_update_dashboard_speed(float speed) {
     // if(speed_label != NULL && lv_scr_act() == ui_dashboard_screen) {

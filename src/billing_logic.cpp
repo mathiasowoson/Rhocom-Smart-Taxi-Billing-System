@@ -1,5 +1,6 @@
 #include "config.h"
 #include "billing_logic.h"
+#include "blynk_logic.h"
 #include <math.h>
 #include <TinyGsmClient.h>
 #include "screens/ui_dashboard.h"
@@ -9,6 +10,8 @@ float fuelPrice = 1300.0;    // Default price per Liter
 float kmlEfficiency = 10.0;  // Assume 10km per Liter for now
 float last_lat = 0, last_lon = 0;
 float gpsSpeed = 0.0;
+float dailyUnionTotal = 0.0;
+int validCheckinsToday = 0;
 
 // Constants
 const float WAITING_CHARGE = 10.0;    // N10 per 5 minutes
@@ -21,6 +24,8 @@ void billing_init(void) {
     for (int i = 0; i < 10; i++) {
         billing_reset_tag(i);
     }
+    dailyUnionTotal = 0.0;
+    validCheckinsToday = 0;
     set_gps_power(true); // Turn on GNSS at startup
 }
 
@@ -168,4 +173,48 @@ void billing_reset_tag(int id) {
     tags[id].isActive = false;
     tags[id].currentFare = 0.0;
     tags[id].id = -1;
+}
+
+// --- 1. LOCAL DATABASE (Simulating Backend) ---
+// This struct array is our "White List". 
+// In the future, we will replace this with a JSON parser from your server.
+UnionMember unionDb[] = {
+    {"ID100", "Ikeja", "Park Fee", 200.0},
+    {"ID101", "Oshodi", "Park Fee", 200.0},
+    {"ID200", "Lekki", "Maintenance", 500.0},
+    {"ID300", "Ajah", "Checkpoint", 100.0},
+    {"ID400", "Yaba", "Emergency", 150.0}
+};
+const int dbSize = sizeof(unionDb) / sizeof(unionDb[0]);
+
+// --- 3. UNION VALIDATION LOGIC ---
+/**
+ * Returns:
+ * 1 = Success (ID matches and belongs to the selected union)
+ * 2 = Wrong Union (ID exists but driver picked the wrong category)
+ * 0 = Fail (ID not found)
+ */
+int validate_union_id_status(String inputId, String selectedUnion) {
+    for (int i = 0; i < dbSize; i++) {
+        if (unionDb[i].id == inputId) {
+            // Check if the ID belongs to the union type the driver selected on screen
+            // We use 'indexOf' to be safe with strings like "Park Fee (N200)"
+            if (selectedUnion.indexOf(unionDb[i].unionType) != -1) {
+                dailyUnionTotal += unionDb[i].fee;
+                validCheckinsToday++;
+                
+                Serial.printf("LOGIC: Validated %s at %s. N%.2f added.\n", 
+                              unionDb[i].unionType.c_str(), unionDb[i].branch.c_str(), unionDb[i].fee);
+                
+                // Trigger a Blynk sync immediately so the owner sees the update
+                blynk_sync_data(); 
+                return 1; 
+            } else {
+                Serial.println("LOGIC: ID valid but WRONG UNION category.");
+                return 2; 
+            }
+        }
+    }
+    Serial.println("LOGIC: ID NOT FOUND.");
+    return 0; 
 }

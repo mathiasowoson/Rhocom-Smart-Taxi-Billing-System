@@ -3,6 +3,7 @@
 #include "billing_logic.h"
 #include "blynk_logic.h"
 #include "config.h"
+#include "driver_logic.h"
 
 
 
@@ -52,8 +53,19 @@ void setup() {
     };
     lv_indev_drv_register(&indev_drv);
 
+    // 1. Initialize Hardware via our new driver (Calls M5.begin internally)
+    driver_logic_init();
+    Serial.println("System: Hardware Initialized");
+
+    // 2. Initialize Billing & Databases
+    billing_init();
+
     // 3. Start System UI
     ui_init(); // Initialize the Rhocom UI Manager
+
+    // 4. Setup Blynk (WiFi/LTE Hybrid)
+    blynk_setup();
+
 }
 
 void loop() {
@@ -61,5 +73,7 @@ void loop() {
     lv_timer_handler(); // Refresh screen
     blynk_update();      // Process Cloud signals
     billing_update_all(); // Update the fares in background
+    // 2. Handle the physical power button logic
+    driver_handle_power_button();
     delay(5);
 }

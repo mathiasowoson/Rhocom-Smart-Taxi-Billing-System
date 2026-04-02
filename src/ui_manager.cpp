@@ -2,6 +2,13 @@
 // Include the headers for individual screens (we will create these next)
 #include "screens/ui_dashboard.h"
 #include "screens/ui_passenger.h"
+#include "screens/ui_union.h"
+#include "screens/ui_settings.h"
+#include "screens/ui_history.h"
+#include "screens/ui_reports.h"
+
+
+static lv_obj_t * current_screen = NULL;
 
 // Objects for the Header
 static lv_obj_t * header_bar;
@@ -9,13 +16,9 @@ static lv_obj_t * label_gps;
 static lv_obj_t * label_cloud;
 static lv_obj_t * label_batt;
 
+
 void ui_init(void) {
-    // Start by initializing all screen layouts in memory (or as needed)
-    ui_dashboard_init();
-    ui_passenger_init();
-    
-    // Load the first screen
-    ui_goto_dashboard();
+   ui_goto_page(UI_PAGE_DASHBOARD);
 }
 
 void ui_create_header(lv_obj_t* parent) {
@@ -52,16 +55,45 @@ void ui_create_header(lv_obj_t* parent) {
     lv_obj_align(label_batt, LV_ALIGN_RIGHT_MID, -5, 0);
 }
 
-// Simple Screen Switcher
-void ui_goto_dashboard(void) {
-    ui_dashboard_init();
-    ui_dashboard_display(); 
-}
 
-void ui_goto_passenger_mgmt(void) {
-    ui_passenger_display();
-}
 
+void ui_goto_page(ui_page_t page) {
+    switch (page) {
+        case UI_PAGE_DASHBOARD:
+            if (ui_dashboard_screen == NULL) ui_dashboard_init();
+            lv_scr_load(ui_dashboard_screen);
+            break;
+
+        case UI_PAGE_PASSENGER:
+            if (ui_passenger_screen == NULL) ui_passenger_init();
+            lv_scr_load(ui_passenger_screen);
+            break;
+
+        case UI_PAGE_UNION:
+            if (ui_union_screen == NULL) ui_union_init();
+            lv_scr_load(ui_union_screen);
+            break;
+
+        case UI_PAGE_SETTINGS:
+            if (ui_settings_screen == NULL) ui_settings_init();
+            lv_scr_load(ui_settings_screen);
+            break;
+
+        case UI_PAGE_REPORTS:
+            if (ui_reports_screen == NULL) ui_reports_init();
+            lv_scr_load(ui_reports_screen);
+            break;
+
+        case UI_PAGE_HISTORY:
+            if (ui_history_screen == NULL) ui_history_init();
+            lv_scr_load(ui_history_screen);
+            break;
+
+        case UI_PAGE_LOGOUT:
+            ESP.restart(); 
+            break;
+    }
+}
 // This updates the header icons in real-time
 void ui_update_status_bar(bool gps_fixed, bool cloud_conn, int batt) {
     if (header_bar == NULL) return;
@@ -76,4 +108,13 @@ void ui_update_status_bar(bool gps_fixed, bool cloud_conn, int batt) {
     if (batt < 20) lv_label_set_text(label_batt, LV_SYMBOL_BATTERY_EMPTY);
     else if (batt < 80) lv_label_set_text(label_batt, LV_SYMBOL_BATTERY_3);
     else lv_label_set_text(label_batt, LV_SYMBOL_BATTERY_FULL);
+}
+
+// Global dashboard call back button declaration
+void ui_back_to_dash_cb(lv_event_t * e) {
+    // We only care about the CLICKED event
+    if (lv_event_get_code(e) == LV_EVENT_CLICKED) {
+        Serial.println("Nav: Returning to Dashboard");
+        ui_goto_page(UI_PAGE_DASHBOARD);
+    }
 }

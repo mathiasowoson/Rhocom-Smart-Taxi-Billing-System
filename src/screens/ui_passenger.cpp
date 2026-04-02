@@ -1,8 +1,10 @@
-#include "screens/ui_passenger.h"
 #include "ui_manager.h"
+#include "screens/ui_passenger.h"
 #include "billing_logic.h"
 
-static lv_obj_t * ui_passenger_screen;
+lv_obj_t* ui_passenger_screen = NULL;
+
+// static lv_obj_t * ui_passenger_screen;
 static lv_obj_t * tag_list; // The scrolling container
 
 // --- Event Handlers ---
@@ -32,17 +34,24 @@ static void end_trip_cb(lv_event_t * e) {
 
 void ui_passenger_init(void) {
     ui_passenger_screen = lv_obj_create(NULL);
+
+    lv_obj_set_style_bg_color(ui_passenger_screen, lv_color_hex(0x000000), 0);
     ui_create_header(ui_passenger_screen);
 
     // Create a Scrolling List for Tags
     tag_list = lv_list_create(ui_passenger_screen);
     lv_obj_set_size(tag_list, 300, 180);
     lv_obj_align(tag_list, LV_ALIGN_BOTTOM_MID, 0, -5);
+
+     lv_obj_t * back_btn = lv_btn_create(ui_passenger_screen);
+    lv_obj_set_size(back_btn, 50, 35);
+    lv_obj_align(back_btn, LV_ALIGN_TOP_LEFT, 5, 5);
+    lv_obj_t * back_lbl = lv_label_create(back_btn);
+    lv_label_set_text(back_lbl, LV_SYMBOL_LEFT);
+    lv_obj_add_event_cb(back_btn, ui_back_to_dash_cb, LV_EVENT_CLICKED, NULL);
+
 }
 
-void ui_passenger_display(void) {
-    if(ui_passenger_screen) lv_scr_load(ui_passenger_screen);
-}
 
 // Function to add a Tag (can be triggered by Blynk/Cloud)
 void ui_add_passenger_tag(int tag_id, const char* name) {
@@ -94,9 +103,18 @@ void ui_show_passenger_modal(int tag_id) {
     lv_obj_t * btn_cont = lv_btn_create(modal);
     lv_obj_set_size(btn_cont, 100, 40);
     lv_obj_align(btn_cont, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+
     lv_obj_add_event_cb(btn_cont, [](lv_event_t * e){
-        lv_obj_del(lv_obj_get_parent(lv_obj_get_parent(lv_event_get_target(e))));
-    }, LV_EVENT_CLICKED, NULL);
+    // 1. Get the button
+    lv_obj_t * btn = lv_event_get_target(e);
+    // 2. Get the Modal (Parent of Button)
+    lv_obj_t * modal_win = lv_obj_get_parent(btn);
+    // 3. Get the Overlay (Parent of Modal)
+    lv_obj_t * overlay = lv_obj_get_parent(modal_win);
+    
+    // Delete the Overlay and everything inside it will die too
+    lv_obj_del(overlay);
+}, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t * l_cont = lv_label_create(btn_cont);
     lv_label_set_text(l_cont, "BACK");

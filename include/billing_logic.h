@@ -15,6 +15,12 @@ extern float fuelPrice;
 extern float kmlEfficiency;   
 extern float gpsSpeed;
 
+struct UnionMember {
+    String id;
+    String branch;
+    String unionType; // e.g., "Maintenance", "Emergency"
+    float fee;
+};
 
 // --- Core Billing Functions ---
 void billing_init(void);
@@ -29,10 +35,15 @@ void billing_start_trip(int tag_id);
 
 // Reset a passenger slot after payment
 void billing_reset_tag(int tag_id);
+int validate_union_id_status(String inputId, String selectedUnion);
 
 // --- GPS AT Command Helpers ---
 void set_gps_power(bool on);
 bool get_at_gps_data(float &lat, float &lon, float &speed);
 float calculate_haversine(float lat1, float lon1, float lat2, float lon2);
+
+// Externs for shared data
+extern float dailyUnionTotal;
+extern int validCheckinsToday;
 
 #endif

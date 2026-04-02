@@ -1,3 +1,4 @@
+#define BLYNK_PRINT Serial
 #include "config.h"
 #include <esp_task_wdt.h>
 #include "billing_logic.h"
@@ -7,7 +8,6 @@
 // #define TINY_GSM_MODEM_SIM7080 // Matches your COM.X specific modem
 
 #include <BlynkSimpleTinyGSM.h> // <--- Put it ONLY here!
-#define BLYNK_PRINT Serial
 #include <TinyGsmClient.h>
 
 // 2. The ONLY Blynk header we need for Hybrid mode
@@ -43,25 +43,33 @@ BLYNK_WRITE(VPIN_ADD_TAG) {
 
 BLYNK_WRITE(VPIN_VALIDATE) { // Fixed VPIN name from your config
     int status = param.asInt();
-    // Logic for Union validation
+    // Logic for Union validation,but right now we validate using fake database in the device
+    // in the future it can be change to push HTTP request for the ID validation
 }
 
 BLYNK_READ(VPIN_REVENUE) {
-    float total = 0;
-    for(int i=0; i<10; i++) {
-        if(tags[i].isActive) total += tags[i].currentFare;
+    float passengerFares = 0;
+    for(int i = 0; i < 10; i++) {
+        if(tags[i].isActive) passengerFares += tags[i].currentFare;
     }
-    Blynk.virtualWrite(VPIN_REVENUE, total);
+    
+    // Total Revenue = Current trips + Union fees collected today
+    float grandTotal = passengerFares + dailyUnionTotal;
+    
+    Blynk.virtualWrite(VPIN_REVENUE, grandTotal);
+    
+    // Optionally: Send the count of union checkins to another Pin (e.g., V6)
+    Blynk.virtualWrite(VPIN_TODAYCHECKIN, validCheckinsToday);//logic can be found inside billing_logic
 }
 
 // Virtual Pin for Fuel Price update(e.g., V10)
-BLYNK_WRITE(V10) {
+BLYNK_WRITE(VPIN_FUEL_PRICE) {
     fuelPrice = param.asFloat();
     Serial.print("Cloud Update: New Fuel Price = N");
     Serial.println(fuelPrice);
 }
 
-BLYNK_WRITE(V11) { // Virtual Pin V11 for Efficiency (KM/L)
+BLYNK_WRITE(VPIN_KMLEFFICIENCY) { // Virtual Pin V11 for Efficiency (KM/L)
     kmlEfficiency = param.asFloat();
     Serial.printf("Cloud Sync: Vehicle Efficiency updated to %.1f KM/L\n", kmlEfficiency);
 }
@@ -70,7 +78,7 @@ BLYNK_WRITE(V11) { // Virtual Pin V11 for Efficiency (KM/L)
 
 void blynk_setup(void) {
     // 1. Disable Watchdog for boot
-    esp_task_wdt_deinit(); 
+    // esp_task_wdt_deinit(); 
 
     Serial.println("Blynk Setup Started...");
 
@@ -88,7 +96,7 @@ void blynk_setup(void) {
         WiFi.begin("Your_SSID", "Your_PASS"); 
         
         int attempt = 0;
-        while (WiFi.status() != WL_CONNECTED && attempt < 20) {
+        while (WiFi.status() != WL_CONNECTED && attempt < 10) {
             delay(500);
             Serial.print(".");
             attempt++;
@@ -98,23 +106,21 @@ void blynk_setup(void) {
             Serial.println("\nWiFi Connected!");
             // Blynk connects via the WiFi Client
             Blynk.config(modem, BLYNK_AUTH_TOKEN);
-            Blynk.connect();
+            Blynk.connect(5000); // 5 second limit
         }
     } 
     else {
         Serial.println("Network: LTE Mode (COM.X) Selected.");
-        if (!modem.restart()) {
-           Blynk.begin(BLYNK_AUTH_TOKEN, modem, "internet", "", "");
+        if (modem.restart()) { // If restart is SUCCESSFUL
+            Serial.println("Modem OK. Connecting Blynk...");
+            Blynk.begin(BLYNK_AUTH_TOKEN, modem, "internet", "", "");
         } else {
-            Serial.println("Modem not found. Continuing in offline mode.");
+            Serial.println("Modem Failed. Staying Offline.");
         }
-        // const char* apn = "internet"; 
-        // Blynk.begin(BLYNK_AUTH_TOKEN, modem, apn, "", "");
     }
     // RE-ARM THE WATCHDOG: Now that we are connected, set it to 5 seconds
-    esp_task_wdt_init(5, true); 
-    esp_task_wdt_add(NULL);
-    Serial.println("\nSystem Ready. Watchdog re-enabled.");
+   esp_task_wdt_init(10, true); // Set to 10 seconds for a safer margin
+   esp_task_wdt_reset(); // "Feed the dog"
 }
 
 void blynk_update(void) {
@@ -128,6 +134,6 @@ void blynk_update(void) {
     }
 }
 
-// void blynk_sync_data(void) {
-//     Blynk.virtualWrite(VPIN_VALIDATE, isPublicMode ? 1 : 0);
-// }
+void blynk_sync_data(void) {
+    Blynk.virtualWrite(VPIN_VALIDATE, isPublicMode ? 1 : 0);
+}

@@ -4,9 +4,8 @@
 #include "config.h"
 
 // 1. Modem Driver Configuration (One place to change it)
-#define TINY_GSM_MODEM_SIM7080 
+#define TINY_GSM_MODEM_SIM7600 // CRITICAL: Tells library to use SIM7600 commands 
 #include <TinyGsmClient.h>
-#define TINY_GSM_MODEM_SIM7080
 
 // 2. Global Modem Objects
 extern TinyGsm modem;

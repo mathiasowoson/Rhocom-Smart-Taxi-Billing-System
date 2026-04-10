@@ -1,30 +1,37 @@
+#include <esp_task_wdt.h>  // Essential for handling GSM delays
 #include "config.h"
 #include "ui_manager.h"
 #include "billing_logic.h"
-#include "blynk_logic.h"
-#include "config.h"
+#include "blynkGsm_logic.h"  // Unified GSM Logic
 #include "driver_logic.h"
 
-
-
-// Global Data Init
-PassengerTag tags[10];
-NetMode currentNetMode = MODE_LTE; // Default to LTE on startup
-int activeCount = 0;
-bool isPublicMode = true;
+// Timer for syncing data (every 5 seconds)
+unsigned long lastSyncTime = 0;
+const unsigned long syncInterval = 5000;
 
 // LVGL Buffer
 static lv_disp_draw_buf_t draw_buf;
 static lv_color_t buf[320 * 24];
 
+PassengerTag tags[10];     
+bool isPublicMode = false;             
+
 void setup() {
+    // 1. Initialize M5Stack Core2 via M5Unified
     auto cfg = M5.config();
     M5.begin(cfg);
-    
-    
-    // 1. LVGL Display Setup
+    Serial.begin(115200);
+
+    esp_task_wdt_init(45, true); 
+    esp_task_wdt_add(NULL); 
+    esp_task_wdt_reset();
+
+    Serial.println("System: Starting Smart Taxi (GSM Mode)...");
+
+    // 2. LVGL Display Setup
     lv_init();
     lv_disp_draw_buf_init(&draw_buf, buf, NULL, 320 * 24);
+    
     static lv_disp_drv_t disp_drv;
     lv_disp_drv_init(&disp_drv);
     disp_drv.hor_res = 320;
@@ -36,7 +43,7 @@ void setup() {
     disp_drv.draw_buf = &draw_buf;
     lv_disp_drv_register(&disp_drv);
 
-    // 2. Touch Driver Setup
+    // 3. Touch Driver Setup
     static lv_indev_drv_t indev_drv;
     lv_indev_drv_init(&indev_drv);
     indev_drv.type = LV_INDEV_TYPE_POINTER;
@@ -53,27 +60,38 @@ void setup() {
     };
     lv_indev_drv_register(&indev_drv);
 
-    // 1. Initialize Hardware via our new driver (Calls M5.begin internally)
+    // 6. Start System UI
+    ui_init(); 
+    Serial.println("System: Initialization Complete.");
+
+
+    // 4. Initialize Hardware Components
     driver_logic_init();
-    Serial.println("System: Hardware Initialized");
-
-    // 2. Initialize Billing & Databases
-    billing_init();
-
-    // 3. Start System UI
-    ui_init(); // Initialize the Rhocom UI Manager
-
-    // 4. Setup Blynk (WiFi/LTE Hybrid)
-    blynk_setup();
-
+    billing_init();      // Starts GPS tracking logic
+    
+    // 5. Start Blynk via SIM7600
+    blynk_gsm_setup();
 }
 
 void loop() {
+    esp_task_wdt_reset();
     M5.update();
-    lv_timer_handler(); // Refresh screen
-    blynk_update();      // Process Cloud signals
-    billing_update_all(); // Update the fares in background
-    // 2. Handle the physical power button logic
+    lv_timer_handler(); 
+    
+    // Process Blynk Cloud connection
+    blynk_gsm_update(); 
+
+    // Update GPS coordinates and calculate fares
+    billing_update_all();
+
+    // Automatic Data Sync every 5 seconds
+    if (millis() - lastSyncTime >= syncInterval) {
+        lastSyncTime = millis();
+        blynk_gsm_sync();
+    }
+
+    // Handle physical hardware buttons (Power, etc)
     driver_handle_power_button();
+    
     delay(5);
 }

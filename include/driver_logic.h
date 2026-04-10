@@ -4,9 +4,11 @@
 #include "config.h"
 
 // Global States
-extern bool screen_sleeping;
+// Sound beeping
 extern bool isSoundEnabled;
+extern bool screen_sleeping;
 extern int last_brightness;
+extern int batteryLevel;
 
 // Initialization
 void driver_logic_init(void);

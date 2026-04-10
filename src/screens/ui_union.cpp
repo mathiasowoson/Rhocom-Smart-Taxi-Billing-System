@@ -2,7 +2,7 @@
 #include "screens/ui_union.h"
 #include "screens/ui_dashboard.h"
 #include "billing_logic.h" // Needed to call validation functions
-#include "blynk_logic.h"   // Needed to sync revenue to phone
+#include "blynkGsm_logic.h"   // Needed to sync revenue to phone
 
 lv_obj_t* ui_union_screen = NULL;
 
@@ -38,7 +38,7 @@ static void kb_event_cb(lv_event_t * e) {
 
         if(status == 1) {
             show_status_msg("Paid Successfully!", lv_palette_main(LV_PALETTE_GREEN));
-            blynk_sync_data(); // Push new revenue to Blynk immediately
+            blynk_gsm_sync(); // Push new revenue to Blynk immediately
         } else {
             show_status_msg("Incorrect ID", lv_palette_main(LV_PALETTE_RED));
         }

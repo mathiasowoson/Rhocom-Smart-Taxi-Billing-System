@@ -1,20 +1,24 @@
 #ifndef BILLING_LOGIC_H
 #define BILLING_LOGIC_H
 
+#include <Arduino.h>
 #include "config.h"
-#include "blynk_logic.h" // <--- This gives billing access to the Modem
-// 1. Add the Modem definitions so the header knows what "TinyGsm" is
-// #define TINY_GSM_MODEM_SIM7080 
-// #include <TinyGsmClient.h>
 
-// 2. Now you can safely declare the extern modem
-// extern TinyGsm modem;
+// --- 1. MODEM ACCESS ---
+// We include the new GSM logic file so the billing system knows how to sync to Blynk
+#include "blynkGsm_logic.h" 
 
-// --- Global Variables (Shared across files) ---
-extern float fuelPrice;       
-extern float kmlEfficiency;   
+// --- 2. GLOBAL SHARED VARIABLES ---
+// These are defined in billing_logic.cpp and used in UI/Blynk
+extern float fuelPrice;      
+extern float kmlEfficiency;  
 extern float gpsSpeed;
+extern float dailyUnionTotal;
+extern int validCheckinsToday;
+extern float totalFaresCollectedToday;
+extern int activeCount;
 
+// --- 3. DATA STRUCTURES ---
 struct UnionMember {
     String id;
     String branch;
@@ -22,28 +26,29 @@ struct UnionMember {
     float fee;
 };
 
-// --- Core Billing Functions ---
+// --- 4. CORE BILLING FUNCTIONS ---
+
+// Initialize timers and turn on GPS hardware
 void billing_init(void);
-// Update the fare for all active passengers (Call this in the main loop)
+
+// Main loop function to calculate distance and fares for all passengers
 void billing_update_all(void);
 
-// Calculate the final fare for a specific passenger when the trip ends
-float calculate_final_fare(int tag_id);
-
-// Start tracking a new passenger
+// Start tracking a new passenger in a specific slot
 void billing_start_trip(int tag_id);
 
-// Reset a passenger slot after payment
+// Finalize fare, lock in the total, and trigger Blynk sync
+void calculate_final_fare(int slot);
+
+// Reset a passenger slot data
 void billing_reset_tag(int tag_id);
+
+// Validate ID against the local/remote union database
 int validate_union_id_status(String inputId, String selectedUnion);
 
-// --- GPS AT Command Helpers ---
+// --- 5. GPS & MATH HELPERS ---
 void set_gps_power(bool on);
 bool get_at_gps_data(float &lat, float &lon, float &speed);
 float calculate_haversine(float lat1, float lon1, float lat2, float lon2);
-
-// Externs for shared data
-extern float dailyUnionTotal;
-extern int validCheckinsToday;
 
 #endif

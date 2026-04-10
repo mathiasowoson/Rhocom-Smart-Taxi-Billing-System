@@ -3,6 +3,7 @@
 
 bool screen_sleeping = false;
 bool isSoundEnabled = true;
+int batteryLevel = 100;
 int last_brightness = 128;
 
 void driver_logic_init(void) {

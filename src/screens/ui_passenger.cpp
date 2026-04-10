@@ -17,17 +17,21 @@ static void tag_clicked_cb(lv_event_t * e) {
 
 // When "END TRIP" is clicked inside the Pop-Over
 static void end_trip_cb(lv_event_t * e) {
-    int tag_id = (int)lv_event_get_user_data(e);
+    int tag_id = (int)(uintptr_t)lv_event_get_user_data(e);
     
     // 1. Call logic to finalize fare
-    float final_fare = calculate_final_fare(tag_id); 
+    calculate_final_fare(tag_id); 
+    // 2. Read the final value from our data structure instead of the function return
+    float final_fare = tags[tag_id].currentFare;
+    Serial.printf("UI: Trip ended for Tag %d. Final Fare: N%.2f\n", tag_id, final_fare);
     
     // 2. Transition to QR screen (We will build this later)
     // ui_goto_qr_display(tag_id, final_fare);
     
     // For now, close modal
-    lv_obj_t * modal = lv_obj_get_parent(lv_event_get_target(e));
-    lv_obj_del(modal);
+    lv_obj_t * target = lv_event_get_target(e);
+    lv_obj_t * modal = lv_obj_get_parent(target);
+    if(modal) lv_obj_del(modal);
 }
 
 // --- Screen Initialization ---

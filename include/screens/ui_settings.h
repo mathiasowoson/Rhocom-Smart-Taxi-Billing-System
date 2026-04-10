@@ -3,6 +3,7 @@
 
 #include "config.h"
 
+extern bool isPublicMode;
 extern lv_obj_t* ui_settings_screen;
 
 void ui_settings_init(void);

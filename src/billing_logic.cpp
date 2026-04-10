@@ -1,92 +1,81 @@
-#include "config.h"
 #include "billing_logic.h"
-#include "blynk_logic.h"
-#include <math.h>
+#define TINY_GSM_MODEM_SIM7600 
 #include <TinyGsmClient.h>
+#include "blynkGsm_logic.h" // Points to our new unified GSM Blynk file
+#include <math.h>
 #include "screens/ui_dashboard.h"
 
+// --- 1. LINK TO THE MODEM DEFINED IN blynkGsm_logic.cpp ---
+extern TinyGsm modem;
+
 // Initialize Globals
-float fuelPrice = 1300.0;    // Default price per Liter
-float kmlEfficiency = 10.0;  // Assume 10km per Liter for now
+float fuelPrice = 1300.0;
+float kmlEfficiency = 10.0;
 float last_lat = 0, last_lon = 0;
 float gpsSpeed = 0.0;
 float dailyUnionTotal = 0.0;
+float totalFaresCollectedToday = 0.0f;
 int validCheckinsToday = 0;
 
-// Constants
-const float WAITING_CHARGE = 10.0;    // N10 per 5 minutes
-const uint32_t FIVE_MINUTES = 300000; // 5 minutes in milliseconds
-
-// Timers for Waiting logic
+const float WAITING_CHARGE = 10.0;
+const uint32_t FIVE_MINUTES = 300000;
 uint32_t stationaryStartTime[10] = {0};
+
+// 1. AT Commands for SIM7600G
+void set_gps_power(bool on) {
+    // We use modem.sendAT directly to bypass high-level library delays
+    if(on) {
+        modem.sendAT("+CGPS=1"); 
+    } else {
+        modem.sendAT("+CGPS=0"); 
+    }
+    modem.waitResponse();
+}
+
+bool get_at_gps_data(float &lat, float &lon, float &speed) {
+    modem.sendAT("+CGPSINFO");
+    if (modem.waitResponse(1000, "+CGPSINFO: ") != 1) {
+        return false;
+    }
+
+    String resp = modem.stream.readStringUntil('\n');
+    resp.trim();
+
+    if (resp.length() < 10 || resp.indexOf(",,,,") != -1) {
+        return false; 
+    }
+
+    // Parse CSV: [Lat],[N],[Lon],[E],[Date],[Time],[Alt],[Speed]
+    int p[8];
+    int lastPos = 0;
+    for(int i=0; i<8; i++) {
+        p[i] = resp.indexOf(',', lastPos);
+        if (p[i] == -1) break;
+        lastPos = p[i] + 1;
+    }
+
+    // Latitude
+    String rawLat = resp.substring(0, p[0]);
+    lat = rawLat.substring(0, 2).toFloat() + (rawLat.substring(2).toFloat() / 60.0);
+    if (resp.substring(p[0]+1, p[1]) == "S") lat *= -1;
+
+    // Longitude
+    String rawLon = resp.substring(p[1]+1, p[2]);
+    lon = rawLon.substring(0, 3).toFloat() + (rawLon.substring(3).toFloat() / 60.0);
+    if (resp.substring(p[2]+1, p[3]) == "W") lon *= -1;
+
+    // Speed (Knots to KM/H)
+    speed = resp.substring(p[6]+1, p[7]).toFloat() * 1.852; 
+    return true;
+}
+
+// --- 3. TAXI BILLING CALCULATIONS ---
 
 void billing_init(void) {
     for (int i = 0; i < 10; i++) {
         billing_reset_tag(i);
     }
-    dailyUnionTotal = 0.0;
-    validCheckinsToday = 0;
-    set_gps_power(true); // Turn on GNSS at startup
-}
-
-// 1. AT Commands for SIM7600G
-void set_gps_power(bool on) {
-    if(on) {
-        modem.sendAT("+CGPS=1"); // Turn on GPS engine
-    } else {
-        modem.sendAT("+CGPS=0"); // Turn off
-    }
-    modem.waitResponse();
-}
-
-// 2. Parsed SIM7600G GPS Data (NMEA to Decimal)
-bool get_at_gps_data(float &lat, float &lon, float &speed) {
-    modem.sendAT("+CGPSINFO");
-    // Wait for the response
-    if (modem.waitResponse(1000, "+CGPSINFO: ") != 1) {
-        // This means the modem didn't even answer the command
-        Serial.println("MODEM ERROR: No response to AT+CGPSINFO");
-        return false;
-    }
-
-    String resp = modem.stream.readStringUntil('\n');
-    
-    // PRINT THE RAW DATA TO TERMINAL
-    Serial.print("RAW GPS DATA: ");
-    Serial.println(resp); 
-
-    if (resp.indexOf(",,,,") != -1) {
-        Serial.println("GPS STATUS: Searching for Satellites...");
-        return false; 
-    }
-
-    // Parse CSV: [Lat],[N],[Lon],[E],[Date],[Time],[Alt],[Speed]
-    // Example: 0631.4640,N,00322.7520,E...
-    int p[8];
-    int lastPos = 0;
-    for(int i=0; i<8; i++) {
-        p[i] = resp.indexOf(',', lastPos);
-        lastPos = p[i] + 1;
-    }
-
-    // Convert Latitude (DDMM.MMMM to DD.DDDD)
-    String rawLat = resp.substring(0, p[0]);
-    float latDeg = rawLat.substring(0, 2).toFloat();
-    float latMin = rawLat.substring(2).toFloat();
-    lat = latDeg + (latMin / 60.0);
-    if (resp.substring(p[0]+1, p[1]) == "S") lat *= -1;
-
-    // Convert Longitude (DDDMM.MMMM to DD.DDDD)
-    String rawLon = resp.substring(p[1]+1, p[2]);
-    float lonDeg = rawLon.substring(0, 3).toFloat();
-    float lonMin = rawLon.substring(3).toFloat();
-    lon = lonDeg + (lonMin / 60.0);
-    if (resp.substring(p[2]+1, p[3]) == "W") lon *= -1;
-
-    // Speed (Knots to KM/H)
-    speed = resp.substring(p[6]+1, p[7]).toFloat() * 1.852; 
-
-    return true;
+    set_gps_power(true); 
 }
 
 // 3. Haversine Math
@@ -155,18 +144,23 @@ void billing_update_all(void) {
     }
 }
 
-void billing_start_trip(int id) {
-    if (id >= 0 && id < 10) {
-        tags[id].isActive = true;
-        tags[id].currentFare = 200.0; // Starting Base Fare (e.g. N200)
-        tags[id].startTime = millis();
+void calculate_final_fare(int slot) {
+    if(tags[slot].isActive) {
+        totalFaresCollectedToday += tags[slot].currentFare;
+        tags[slot].isActive = false;
+        tags[slot].currentFare = 0;
+        
+        // Sync to Cloud immediately
+        blynk_gsm_sync(); 
     }
 }
 
-float calculate_final_fare(int tag_id) {
-    if (tag_id < 0 || tag_id >= 10) return 0.0;
-    tags[tag_id].isActive = false; 
-    return tags[tag_id].currentFare;
+void billing_start_trip(int id) {
+    if (id >= 0 && id < 10) {
+        tags[id].isActive = true;
+        tags[id].currentFare = 200.0; // Base Fare
+        tags[id].startTime = millis();
+    }
 }
 
 void billing_reset_tag(int id) {
@@ -206,8 +200,8 @@ int validate_union_id_status(String inputId, String selectedUnion) {
                 Serial.printf("LOGIC: Validated %s at %s. N%.2f added.\n", 
                               unionDb[i].unionType.c_str(), unionDb[i].branch.c_str(), unionDb[i].fee);
                 
-                // Trigger a Blynk sync immediately so the owner sees the update
-                blynk_sync_data(); 
+                // Push to Cloud immediately
+                blynk_gsm_sync();
                 return 1; 
             } else {
                 Serial.println("LOGIC: ID valid but WRONG UNION category.");

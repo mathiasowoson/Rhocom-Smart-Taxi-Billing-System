@@ -1,18 +1,24 @@
+#include <esp_task_wdt.h>
 #include "billing_logic.h"
-#define TINY_GSM_MODEM_SIM7600 
+
+#define TINY_GSM_MODEM_SIM7600
 #include <TinyGsmClient.h>
-#include "blynkGsm_logic.h" // Points to our new unified GSM Blynk file
+
+#include "blynkGsm_logic.h"
 #include <math.h>
 #include "screens/ui_dashboard.h"
 
-// --- 1. LINK TO THE MODEM DEFINED IN blynkGsm_logic.cpp ---
+extern SemaphoreHandle_t xSerialSemaphore;
 extern TinyGsm modem;
 
-// Initialize Globals
+// =========================
+// GLOBALS
+// =========================
 float fuelPrice = 1300.0;
 float kmlEfficiency = 10.0;
-float last_lat = 0, last_lon = 0;
+
 float gpsSpeed = 0.0;
+
 float dailyUnionTotal = 0.0;
 float totalFaresCollectedToday = 0.0f;
 int validCheckinsToday = 0;
@@ -21,52 +27,47 @@ const float WAITING_CHARGE = 10.0;
 const uint32_t FIVE_MINUTES = 300000;
 uint32_t stationaryStartTime[10] = {0};
 
-// 1. AT Commands for SIM7600G
-void set_gps_power(bool on) {
-    // We use modem.sendAT directly to bypass high-level library delays
-    if(on) {
-        modem.sendAT("+CGPS=1"); 
+// =========================
+// GPS STATE CONTROL
+// =========================
+ bool gpsInitialized = false;
+ unsigned long gpsStartTime = 0;
+
+
+// =========================
+// GET GPS USING TINYGSM (STABLE)
+// =========================
+bool get_gps_data(float &lat, float &lon, float &speed) {
+    if (!gpsInitialized) return false;
+
+    float alt;
+    int sats = 0;
+
+    // Try to take the semaphore. If it fails, we want to know!
+    if (xSemaphoreTake(xSerialSemaphore, pdMS_TO_TICKS(2000)) == pdTRUE) {
+        
+        Serial.println(">>> GPS: Querying Modem..."); 
+        
+        // We use the more detailed getGPS call to see satellite count
+        bool ok = modem.getGPS(&lat, &lon, &speed, &alt, &sats);
+        
+        xSemaphoreGive(xSerialSemaphore);
+
+        if (ok) {
+            if (lat != 0.0) {
+                Serial.printf(">>> GPS: FIX OK! Sats: %d, Lat: %.6f\n", sats, lat);
+                return true;
+            } else {
+                Serial.printf(">>> GPS: NO LOCK. Sats: %d (Modem responded but no fix)\n", sats);
+            }
+        } else {
+            Serial.println(">>> GPS: MODEM TIMEOUT (No response from SIM7600)");
+        }
     } else {
-        modem.sendAT("+CGPS=0"); 
-    }
-    modem.waitResponse();
-}
-
-bool get_at_gps_data(float &lat, float &lon, float &speed) {
-    modem.sendAT("+CGPSINFO");
-    if (modem.waitResponse(1000, "+CGPSINFO: ") != 1) {
-        return false;
+        Serial.println(">>> GPS: SEMAPHORE BLOCKED by Blynk");
     }
 
-    String resp = modem.stream.readStringUntil('\n');
-    resp.trim();
-
-    if (resp.length() < 10 || resp.indexOf(",,,,") != -1) {
-        return false; 
-    }
-
-    // Parse CSV: [Lat],[N],[Lon],[E],[Date],[Time],[Alt],[Speed]
-    int p[8];
-    int lastPos = 0;
-    for(int i=0; i<8; i++) {
-        p[i] = resp.indexOf(',', lastPos);
-        if (p[i] == -1) break;
-        lastPos = p[i] + 1;
-    }
-
-    // Latitude
-    String rawLat = resp.substring(0, p[0]);
-    lat = rawLat.substring(0, 2).toFloat() + (rawLat.substring(2).toFloat() / 60.0);
-    if (resp.substring(p[0]+1, p[1]) == "S") lat *= -1;
-
-    // Longitude
-    String rawLon = resp.substring(p[1]+1, p[2]);
-    lon = rawLon.substring(0, 3).toFloat() + (rawLon.substring(3).toFloat() / 60.0);
-    if (resp.substring(p[2]+1, p[3]) == "W") lon *= -1;
-
-    // Speed (Knots to KM/H)
-    speed = resp.substring(p[6]+1, p[7]).toFloat() * 1.852; 
-    return true;
+    return false;
 }
 
 // --- 3. TAXI BILLING CALCULATIONS ---
@@ -75,72 +76,134 @@ void billing_init(void) {
     for (int i = 0; i < 10; i++) {
         billing_reset_tag(i);
     }
-    set_gps_power(true); 
+
+    // gps_init_sequence();  //  NEW
+    Serial.println("Billing: Initialized and waiting for GPS Hardware...");
 }
 
-// 3. Haversine Math
+// =========================
+// HAVERSINE
+// =========================
 float calculate_haversine(float lat1, float lon1, float lat2, float lon2) {
     float dLat = (lat2 - lat1) * M_PI / 180.0;
     float dLon = (lon2 - lon1) * M_PI / 180.0;
-    float a = pow(sin(dLat/2), 2) + cos(lat1*M_PI/180.0) * cos(lat2*M_PI/180.0) * pow(sin(dLon/2), 2);
-    return 2 * asin(sqrt(a)) * 6371000; // Meters
+
+    float a = pow(sin(dLat/2), 2) +
+              cos(lat1*M_PI/180.0) *
+              cos(lat2*M_PI/180.0) *
+              pow(sin(dLon/2), 2);
+
+    return 2 * asin(sqrt(a)) * 6371000;
 }
 
-// 4. Main Update Logic
+// =========================
+// MAIN UPDATE LOOP
+// =========================
 void billing_update_all(void) {
+
     static uint32_t last_read = 0;
-    if (millis() - last_read < 2000) return; 
+    if (millis() - last_read < 5000) return;
     last_read = millis();
 
-    float nLat, nLon, nSpeed;
-    bool hasFix = get_at_gps_data(nLat, nLon, nSpeed);
 
-    // ==========================================
-    // DEBUGGING / TESTING LOGIC
-    // ==========================================
+    float nLat, nLon, nSpeed;
+    bool hasFix = get_gps_data(nLat, nLon, nSpeed);
+
+    // =========================
+    // DEBUG UI MODE
+    // =========================
     if (!hasFix) {
-        // If NO GPS signal, show a "Test Speed" that counts up
         static float debugSpeed = 0;
         debugSpeed += 1.5;
-        if(debugSpeed > 120) debugSpeed = 0;
-        
-        Serial.println("GPS: No Fix - Running UI Test Mode");
-        ui_update_dashboard_speed(debugSpeed); 
-    } else {
-        // Real GPS Data
-        gpsSpeed = nSpeed;
-        Serial.printf("GPS FIX! Speed: %.2f km/h\n", gpsSpeed);
-        ui_update_dashboard_speed(gpsSpeed);
+        if (debugSpeed > 120) debugSpeed = 0;
+
+        Serial.println("GPS: No Fix - UI Test Mode");
+        ui_update_dashboard_speed(debugSpeed);
+        return;
     }
-    // ==========================================
 
-    if (hasFix) {
-        for (int i = 0; i < 10; i++) {
-            if (!tags[i].isActive) continue;
+    // =========================
+    // REAL GPS DATA
+    // =========================
+    gpsSpeed = nSpeed;
+    ui_update_dashboard_speed(gpsSpeed);
 
-            // --- Fuel Based Calculation ---
-            if (last_lat != 0) {
-                float delta = calculate_haversine(last_lat, last_lon, nLat, nLon);
-                // Filter jumps (ignore small drift < 5m or GPS teleportation > 500m)
-                if (delta > 5.0 && delta < 500.0) {
-                    float deltaKM = delta / 1000.0;
-                    float fuelCost = (deltaKM / kmlEfficiency) * fuelPrice;
-                    tags[i].currentFare += fuelCost;
-                    stationaryStartTime[i] = 0; 
-                }
-            }
+    // =========================
+    // BILLING CALCULATION
+    // =========================
+    for (int i = 0; i < 10; i++) {
 
-            // --- Waiting Charge Calculation ---
-            if (gpsSpeed < 2.0) {
-                if (stationaryStartTime[i] == 0) {
-                    stationaryStartTime[i] = millis();
-                } else if (millis() - stationaryStartTime[i] >= FIVE_MINUTES) {
-                    tags[i].currentFare += WAITING_CHARGE;
-                    stationaryStartTime[i] = millis(); 
-                }
+        if (!tags[i].isActive) continue;
+
+        // =========================
+        // FIRST GPS LOCK FOR THIS PASSENGER
+        // =========================
+        if (tags[i].lastLat == 0) {
+
+            tags[i].lastLat = nLat;
+            tags[i].lastLon = nLon;
+
+            // Save trip starting point ONCE
+            tags[i].startLat = nLat;
+            tags[i].startLon = nLon;
+
+            Serial.printf("Passenger %d trip started at %.6f, %.6f\n", i, nLat, nLon);
+
+            continue;
+        }
+
+        // =========================
+        // DISTANCE CALCULATION PER PASSENGER
+        // =========================
+        float delta = calculate_haversine(
+            tags[i].lastLat,
+            tags[i].lastLon,
+            nLat,
+            nLon
+        );
+
+        // Optional: Total trip distance
+        float totalDistance = calculate_haversine(
+            tags[i].startLat,
+            tags[i].startLon,
+            nLat,
+            nLon
+        );
+
+        Serial.printf("Passenger %d total distance: %.2f m\n", i, totalDistance);
+
+        // =========================
+        // FILTER GPS NOISE
+        // =========================
+        if (delta > 5.0 && delta < 500.0) {
+
+            float deltaKM = delta / 1000.0;
+            float fuelCost = (deltaKM / kmlEfficiency) * fuelPrice;
+
+            tags[i].currentFare += fuelCost;
+
+            stationaryStartTime[i] = 0;
+        }
+
+        // =========================
+        // WAITING CHARGE
+        // =========================
+        if (gpsSpeed < 2.0) {
+
+            if (stationaryStartTime[i] == 0) {
+                stationaryStartTime[i] = millis();
+            } 
+            else if (millis() - stationaryStartTime[i] >= FIVE_MINUTES) {
+                tags[i].currentFare += WAITING_CHARGE;
+                stationaryStartTime[i] = millis();
             }
         }
-        last_lat = nLat; last_lon = nLon;
+
+        // =========================
+        // UPDATE POSITION (CRITICAL)
+        // =========================
+        tags[i].lastLat = nLat;
+        tags[i].lastLon = nLon;
     }
 }
 
@@ -157,9 +220,16 @@ void calculate_final_fare(int slot) {
 
 void billing_start_trip(int id) {
     if (id >= 0 && id < 10) {
+
         tags[id].isActive = true;
-        tags[id].currentFare = 200.0; // Base Fare
+        tags[id].currentFare = 200.0;
         tags[id].startTime = millis();
+
+        // Initialize GPS tracking for THIS passenger
+        tags[id].startLat = 0;
+        tags[id].startLon = 0;
+        tags[id].lastLat = 0;
+        tags[id].lastLon = 0;
     }
 }
 
@@ -167,6 +237,11 @@ void billing_reset_tag(int id) {
     tags[id].isActive = false;
     tags[id].currentFare = 0.0;
     tags[id].id = -1;
+
+    tags[id].startLat = 0;
+    tags[id].startLon = 0;
+    tags[id].lastLat = 0;
+    tags[id].lastLon = 0;
 }
 
 // --- 1. LOCAL DATABASE (Simulating Backend) ---

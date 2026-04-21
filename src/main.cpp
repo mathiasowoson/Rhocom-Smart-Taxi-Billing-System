@@ -1,9 +1,12 @@
+#include "soc/rtc_cntl_reg.h"
 #include <esp_task_wdt.h>  // Essential for handling GSM delays
 #include "config.h"
 #include "ui_manager.h"
 #include "billing_logic.h"
 #include "blynkGsm_logic.h"  // Unified GSM Logic
 #include "driver_logic.h"
+
+SemaphoreHandle_t xSerialSemaphore = NULL;
 
 // Timer for syncing data (every 5 seconds)
 unsigned long lastSyncTime = 0;
@@ -22,9 +25,14 @@ void setup() {
     M5.begin(cfg);
     Serial.begin(115200);
 
-    esp_task_wdt_init(45, true); 
+    xSerialSemaphore = xSemaphoreCreateMutex();
+
+    // This stops the "IDLE0" starvation reboot
+    esp_task_wdt_delete(xTaskGetIdleTaskHandleForCPU(0));
+
+    esp_task_wdt_init(120, true); 
     esp_task_wdt_add(NULL); 
-    esp_task_wdt_reset();
+    // esp_task_wdt_reset();
 
     Serial.println("System: Starting Smart Taxi (GSM Mode)...");
 
@@ -63,14 +71,13 @@ void setup() {
     // 6. Start System UI
     ui_init(); 
     Serial.println("System: Initialization Complete.");
-
+    blynk_gsm_setup(); // 5. Start Blynk via SIM7600
 
     // 4. Initialize Hardware Components
     driver_logic_init();
+
     billing_init();      // Starts GPS tracking logic
-    
-    // 5. Start Blynk via SIM7600
-    blynk_gsm_setup();
+    Serial.println("System: Setup Complete. GSM running in background.");
 }
 
 void loop() {
@@ -78,10 +85,10 @@ void loop() {
     M5.update();
     lv_timer_handler(); 
     
-    // Process Blynk Cloud connection
+    // blynk_gsm_update is now empty because Core 0 handles Blynk.run()
     blynk_gsm_update(); 
 
-    // Update GPS coordinates and calculate fares
+    // GPS and Billing (Protected by Semaphore inside billing_logic)
     billing_update_all();
 
     // Automatic Data Sync every 5 seconds

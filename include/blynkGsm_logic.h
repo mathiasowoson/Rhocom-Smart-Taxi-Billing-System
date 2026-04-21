@@ -1,6 +1,12 @@
 #ifndef BLYNK_GSM_LOGIC_H
 #define BLYNK_GSM_LOGIC_H
 
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+
+// Shared Semaphore for Serial2 access
+extern SemaphoreHandle_t xSerialSemaphore;
+
 // --- Virtual Pins ---
 // These are safe to keep in the header as they are just reference numbers
 #define VPIN_ADD_TAG           V1

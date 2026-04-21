@@ -26,6 +26,22 @@ struct UnionMember {
     float fee;
 };
 
+// --- Passenger Data Structure ---
+struct PassengerTag {
+    int id;
+    float startLat;
+    float startLon;
+
+    float lastLat;
+    float lastLon;
+
+    float currentFare;
+    uint32_t startTime;
+    bool isActive;
+};
+
+// --- Global Variables (Shared across all .cpp files) ---
+extern PassengerTag tags[10];
 // --- 4. CORE BILLING FUNCTIONS ---
 
 // Initialize timers and turn on GPS hardware
@@ -47,8 +63,7 @@ void billing_reset_tag(int tag_id);
 int validate_union_id_status(String inputId, String selectedUnion);
 
 // --- 5. GPS & MATH HELPERS ---
-void set_gps_power(bool on);
-bool get_at_gps_data(float &lat, float &lon, float &speed);
+bool get_gps_data(float &lat, float &lon, float &speed);
 float calculate_haversine(float lat1, float lon1, float lat2, float lon2);
 
 #endif

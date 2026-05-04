@@ -4,9 +4,6 @@
 #include <Arduino.h>
 #include "config.h"
 
-// --- 1. MODEM ACCESS ---
-// We include the new GSM logic file so the billing system knows how to sync to Blynk
-#include "blynkGsm_logic.h" 
 
 // --- 2. GLOBAL SHARED VARIABLES ---
 // These are defined in billing_logic.cpp and used in UI/Blynk
@@ -19,12 +16,12 @@ extern float totalFaresCollectedToday;
 extern int activeCount;
 
 // --- 3. DATA STRUCTURES ---
-struct UnionMember {
-    String id;
-    String branch;
-    String unionType; // e.g., "Maintenance", "Emergency"
-    float fee;
-};
+// struct UnionMember {
+//     String id;
+//     String branch;
+//     String unionType; // e.g., "Maintenance", "Emergency"
+//     float fee;
+// };
 
 // --- Passenger Data Structure ---
 struct PassengerTag {

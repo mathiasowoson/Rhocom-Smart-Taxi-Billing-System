@@ -1,18 +1,18 @@
 #ifndef UI_PASSENGER_H
 #define UI_PASSENGER_H
 
-#include "config.h"
+#include <M5Unified.h>
+#include "ui_manager.h"
 
-extern lv_obj_t* ui_passenger_screen;
-
-// Initialize the screen layout (List container + Header)
 void ui_passenger_init(void);
 
-// Add a new clickable Tag (Button) to the list
-// This can be called from blynk_logic.cpp when a cloud trigger arrives
+// Redraws the list of active passengers
 void ui_refresh_passenger_list(void);
 
-// The "Pop-Over" modal for a specific tag
+// Shows the fare details and "End Trip" option for a specific tag
 void ui_show_passenger_modal(int tag_id);
+
+// Handle touch inputs for this specific page
+void ui_passenger_handle_touch(m5::touch_detail_t &t);
 
 #endif

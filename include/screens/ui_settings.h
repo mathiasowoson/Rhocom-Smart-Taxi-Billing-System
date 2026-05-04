@@ -1,11 +1,16 @@
 #ifndef UI_SETTINGS_H
 #define UI_SETTINGS_H
 
-#include "config.h"
+#include <M5Unified.h>
+#include "ui_manager.h"
 
-extern bool isPublicMode;
-extern lv_obj_t* ui_settings_screen;
-
+// Initialize the screen and global settings state
 void ui_settings_init(void);
+
+// Handle touch events for sliders and buttons
+void ui_settings_handle_touch(m5::touch_detail_t &t);
+
+// Modal for dangerous actions
+void ui_show_factory_reset_warning(void);
 
 #endif

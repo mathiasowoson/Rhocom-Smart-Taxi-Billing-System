@@ -1,10 +1,13 @@
 #ifndef UI_HISTORY_H
 #define UI_HISTORY_H
 
-#include "config.h"
+#include <M5Unified.h>
+#include "ui_manager.h"
 
-extern lv_obj_t* ui_history_screen;
-
+// Initialize and draw the history screen
 void ui_history_init(void);
+
+// Handle touch for the back button or list scrolling
+void ui_history_handle_touch(m5::touch_detail_t &t);
 
 #endif

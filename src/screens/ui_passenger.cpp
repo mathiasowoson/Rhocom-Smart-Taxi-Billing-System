@@ -1,161 +1,153 @@
-#include "ui_manager.h"
 #include "screens/ui_passenger.h"
-#include "billing_logic.h"
+#include "driver_logic.h"
+#include "billing_logic.h" // For access to tags[] and billing functions
 
-lv_obj_t* ui_passenger_screen = NULL;
-
-static lv_obj_t * tag_list; // The scrolling container
-
-// --- Event Handlers ---
-// Event handler for the NEW "Add" button on the screen
-static void add_btn_cb(lv_event_t * e) {
-    int slot = -1;
-    for(int i=0; i<10; i++) {
-        if(!tags[i].isActive) { slot = i; break; }
-    }
-
-    if (slot != -1) {
-        billing_start_trip(slot);
-        ui_refresh_passenger_list(); // Update the screen immediately
-        blynk_gsm_sync();           // Tell the cloud a trip started locally
-    }
-}
-
-// When a Tag in the list is clicked
-static void tag_clicked_cb(lv_event_t * e) {
-    int tag_id = (int)lv_event_get_user_data(e);
-    ui_show_passenger_modal(tag_id); // Open the Pop-Over
-}
-
-// When "END TRIP" is clicked inside the Pop-Over
-static void end_trip_cb(lv_event_t * e) {
-    int tag_id = (int)(uintptr_t)lv_event_get_user_data(e);
-    
-    // 1. Call logic to finalize fare
-    calculate_final_fare(tag_id); 
-    // 2. Read the final value from our data structure instead of the function return
-    float final_fare = tags[tag_id].currentFare;
-    Serial.printf("UI: Trip ended for Tag %d. Final Fare: N%.2f\n", tag_id, final_fare);
-       
-    // For now, close modal
-    lv_obj_t * target = lv_event_get_target(e);
-    lv_obj_t * modal = lv_obj_get_parent(target);
-    if(modal) lv_obj_del(modal);
-}
-
-// --- Screen Initialization ---
+// Local state tracking
+static int active_modal_id = -1; // -1 means no modal is open
+static bool is_modal_showing = false;
 
 void ui_passenger_init(void) {
-    ui_passenger_screen = lv_obj_create(NULL);
+    M5.Display.startWrite();
+    M5.Display.setTextSize(1);              // Force size back to small
+    M5.Display.setFont(&fonts::FreeSans9pt7b);
+    M5.Display.fillScreen(TFT_BLACK);
+    ui_create_header(); // From ui_manager
 
-    lv_obj_set_style_bg_color(ui_passenger_screen, lv_color_hex(0x000000), 0);
-    ui_create_header(ui_passenger_screen);
+    // 1. BACK Button (Top Left)
+    M5.Display.fillRoundRect(5, 40, 50, 35, 4, TFT_DARKGREY);
+    M5.Display.setTextColor(TFT_WHITE);
+    M5.Display.drawCenterString("<", 30, 50);
 
-    // --- ADD PASSENGER BUTTON (Top Right) ---
-    lv_obj_t * add_btn = lv_btn_create(ui_passenger_screen);
-    lv_obj_set_size(add_btn, 40, 35);
-    lv_obj_align(add_btn, LV_ALIGN_TOP_RIGHT, -5, 5);
-    lv_obj_set_style_bg_color(add_btn, lv_palette_main(LV_PALETTE_GREEN), 0);
-    lv_obj_t * add_lbl = lv_label_create(add_btn);
-    lv_label_set_text(add_lbl, LV_SYMBOL_PLUS);
-    lv_obj_center(add_lbl);
-    lv_obj_add_event_cb(add_btn, add_btn_cb, LV_EVENT_CLICKED, NULL);
+    // 2. NEW Button (Top Right)
+    M5.Display.fillRoundRect(265, 40, 50, 35, 4, TFT_GREEN);
+    M5.Display.setTextColor(TFT_BLACK);
+    M5.Display.drawCenterString("+ NEW", 290, 50);
 
-    // Create a Scrolling List for Tags
-    tag_list = lv_list_create(ui_passenger_screen);
-    lv_obj_set_size(tag_list, 300, 180);
-    lv_obj_align(tag_list, LV_ALIGN_BOTTOM_MID, 0, -5);
+    // 3. List Container Area
+    M5.Display.drawRect(5, 80, 310, 155, 0x4444); // Border for the list area
+    M5.Display.endWrite();
 
-     lv_obj_t * back_btn = lv_btn_create(ui_passenger_screen);
-    lv_obj_set_size(back_btn, 50, 35);
-    lv_obj_align(back_btn, LV_ALIGN_TOP_LEFT, 5, 5);
-    lv_obj_t * back_lbl = lv_label_create(back_btn);
-    lv_label_set_text(back_lbl, LV_SYMBOL_LEFT);
-    lv_obj_add_event_cb(back_btn, ui_back_to_dash_cb, LV_EVENT_CLICKED, NULL);
-
-    // Initial draw
     ui_refresh_passenger_list();
 }
 
-
-// Function to add a Tag (can be triggered by Blynk/Cloud)
 void ui_refresh_passenger_list(void) {
-    if(!tag_list) return;
+    if (is_modal_showing) return; // Don't redraw list under modal
 
-    // 1. Clear the current list UI to avoid duplicates
-    lv_obj_clean(tag_list);
+    M5.Display.startWrite();
+    M5.Display.fillRect(6, 81, 308, 153, 0x1A1A); // Clear list area
 
-    // 2. Loop through all 10 slots and draw active passengers
-    for(int i = 0; i < 10; i++) {
-        if(tags[i].isActive) {
+    int y_pos = 85;
+    M5.Display.setFont(&fonts::FreeSans9pt7b);
+    
+    for (int i = 0; i < 10; i++) {
+        if (tags[i].isActive) {
+            // Draw list item "button"
+            M5.Display.fillRoundRect(10, y_pos, 300, 30, 4, 0x3333);
+            M5.Display.setTextColor(TFT_WHITE);
+            
             char buf[32];
-            snprintf(buf, sizeof(buf), "Passenger Tag #%03d", i);
+            snprintf(buf, sizeof(buf), "Tag %d: N%.2f", i + 1, tags[i].currentFare);
+            M5.Display.drawString(buf, 20, y_pos + 7);
             
-            lv_obj_t * btn = lv_list_add_btn(tag_list, LV_SYMBOL_DIRECTORY, buf);
-            // Pass the index 'i' so we know which passenger we are clicking
-            lv_obj_add_event_cb(btn, tag_clicked_cb, LV_EVENT_CLICKED, (void*)(uintptr_t)i);
-            
-            // Optional: Add a label showing the current fare on the list item
-            lv_list_add_text(tag_list, "Active Trip..."); 
+            y_pos += 35; // Move to next slot
         }
     }
+    M5.Display.endWrite();
 }
 
-
-// --- The Pop-Over (Modal) ---
-
 void ui_show_passenger_modal(int tag_id) {
-    // Create a dark background overlay (dimming effect)
-    lv_obj_t * obj = lv_obj_create(lv_scr_act());
-    lv_obj_set_size(obj, 320, 240);
-    lv_obj_set_style_bg_color(obj, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(obj, LV_OPA_50, 0);
-    lv_obj_set_pos(obj, 0, 0);
+    is_modal_showing = true;
+    active_modal_id = tag_id;
 
-    // The actual Pop-Over window
-    lv_obj_t * modal = lv_obj_create(obj);
-    lv_obj_set_size(modal, 260, 160);
-    lv_obj_center(modal);
-
-    lv_obj_t * title = lv_label_create(modal);
-    lv_label_set_text_fmt(title, "PASSENGER #%03d", tag_id);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
-
-    // Current Fare Display (Placeholder)
-    lv_obj_t * fare = lv_label_create(modal);
-    // live fare from the tags array
-    lv_label_set_text_fmt(fare, "Current Fare: N%.2f", tags[tag_id].currentFare);
-    lv_obj_align(fare, LV_ALIGN_CENTER, 0, -10);
-
-    // END TRIP Button
-    lv_obj_t * btn_end = lv_btn_create(modal);
-    lv_obj_set_size(btn_end, 100, 40);
-    lv_obj_align(btn_end, LV_ALIGN_BOTTOM_LEFT, 0, 0);
-    lv_obj_set_style_bg_color(btn_end, lv_palette_main(LV_PALETTE_RED), 0);
-    lv_obj_add_event_cb(btn_end, end_trip_cb, LV_EVENT_CLICKED, (void*)tag_id);
-
-    lv_obj_t * l_end = lv_label_create(btn_end);
-    lv_label_set_text(l_end, "END TRIP");
-    lv_obj_center(l_end);
-
-    // CONTINUE Button
-    lv_obj_t * btn_cont = lv_btn_create(modal);
-    lv_obj_set_size(btn_cont, 100, 40);
-    lv_obj_align(btn_cont, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
-
-    lv_obj_add_event_cb(btn_cont, [](lv_event_t * e){
-    // 1. Get the button
-    lv_obj_t * btn = lv_event_get_target(e);
-    // 2. Get the Modal (Parent of Button)
-    lv_obj_t * modal_win = lv_obj_get_parent(btn);
-    // 3. Get the Overlay (Parent of Modal)
-    lv_obj_t * overlay = lv_obj_get_parent(modal_win);
+    M5.Display.startWrite();
+    M5.Display.setTextSize(1);              // Force size back to small
+    M5.Display.setFont(&fonts::FreeSans9pt7b);
     
-    // Delete the Overlay and everything inside it will die too
-    lv_obj_del(overlay);
-}, LV_EVENT_CLICKED, NULL);
+   // This color (0x1082) is a very dark grey that looks like a dimmed black screen.
+    M5.Display.fillRect(0, 0, 320, 240, M5.Display.color565(20, 20, 20));
 
-    lv_obj_t * l_cont = lv_label_create(btn_cont);
-    lv_label_set_text(l_cont, "BACK");
-    lv_obj_center(l_cont);
+    // 2. Modal Box
+    M5.Display.fillRoundRect(30, 40, 260, 160, 10, 0x2222);
+    M5.Display.drawRoundRect(30, 40, 260, 160, 10, TFT_WHITE);
+
+    // 3. Content
+    M5.Display.setTextColor(TFT_WHITE);
+    M5.Display.setFont(&fonts::FreeSans9pt7b);
+    M5.Display.drawCenterString("PASSENGER #" + String(tag_id + 1), 160, 50);
+    
+    M5.Display.setFont(&fonts::FreeSans12pt7b);
+    M5.Display.drawCenterString("Current: N" + String(tags[tag_id].currentFare, 2), 160, 90);
+
+    // 4. END TRIP Button (Red)
+    M5.Display.fillRoundRect(40, 140, 110, 45, 5, TFT_RED);
+    M5.Display.drawCenterString("END", 95, 153);
+
+    // 5. BACK Button (Grey)
+    M5.Display.fillRoundRect(170, 140, 110, 45, 5, TFT_DARKGREY);
+    M5.Display.drawCenterString("BACK", 225, 153);
+    
+    M5.Display.endWrite();
+}
+
+void ui_passenger_handle_touch(m5::touch_detail_t &t) {
+    if (!t.wasPressed()) return;
+
+    // 1. Handle Modal Input (The Pop-up details)
+    if (is_modal_showing) {
+        // END TRIP Button Clicked (x:40-150, y:140-185)
+        if (t.x > 40 && t.x < 150 && t.y > 140 && t.y < 185) {
+            if (isSoundEnabled) M5.Speaker.tone(1500, 50);
+            calculate_final_fare(active_modal_id);
+            is_modal_showing = false;
+            ui_passenger_init(); // Redraws the list to reset text/UI
+        }
+        // CLOSE/BACK Button Clicked (x:170-280, y:140-185)
+        else if (t.x > 170 && t.x < 280 && t.y > 140 && t.y < 185) {
+            if (isSoundEnabled) M5.Speaker.tone(800, 50);
+            is_modal_showing = false;
+            ui_passenger_init(); // Cleanly redraws the list
+        }
+        return; // Don't allow background clicks while modal is open
+    }
+
+    // 2. Handle Top Bar Buttons
+    if (t.y > 40 && t.y < 75) {
+        // BACK to Dashboard (Top Left)
+        if (t.x < 60) {
+            if (isSoundEnabled) M5.Speaker.tone(1000, 50);
+            ui_goto_page(UI_PAGE_DASHBOARD); // Centralized transition
+            return;
+        }
+        
+        // NEW Passenger (Top Right)
+        if (t.x > 260) { 
+            if (isSoundEnabled) M5.Speaker.tone(2000, 50);
+            int slot = -1;
+            // Searching tags array
+            for(int i=0; i<10; i++) { 
+                if(!tags[i].isActive) { slot = i; break; } 
+            }
+            if (slot != -1) {
+                billing_start_trip(slot);
+                ui_refresh_passenger_list();
+            }
+        }
+    }
+
+    // 3. Handle List Item Clicks (Below top bar)
+    if (t.y > 80) {
+        int clicked_idx = (t.y - 85) / 35;
+        int count = 0;
+        // Search for which active passenger tag was clicked
+        for (int i = 0; i < 10; i++) {
+            if (tags[i].isActive) {
+                if (count == clicked_idx) {
+                    if (isSoundEnabled) M5.Speaker.tone(1200, 30);
+                    ui_show_passenger_modal(i);
+                    break;
+                }
+                count++;
+            }
+        }
+    }
 }

@@ -1,18 +1,20 @@
 #ifndef UI_DASHBOARD_H
 #define UI_DASHBOARD_H
 
-#include "config.h"
-// --- UI Elements (Extern so billing_logic can update them) ---
-extern lv_obj_t * speed_label;
-extern lv_obj_t * unit_label;
-extern lv_obj_t * ui_dashboard_screen;
+#include <M5Unified.h>
+#include "ui_manager.h"
 
+// Externs for global access
+extern float current_speed;
+extern bool dashboard_needs_update;
 
-// Initialize the dashboard layout in memory
+// Initialize and display the dashboard
 void ui_dashboard_init(void);
 
-// Clear the screen and display the dashboard
-// void ui_dashboard_display(void);
+// Update logic
 void ui_update_dashboard_speed(float speed);
+
+// Function to handle touches specifically for the dashboard
+void ui_dashboard_handle_touch(m5::touch_detail_t &t);
 
 #endif

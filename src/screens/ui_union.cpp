@@ -1,140 +1,165 @@
-#include "ui_manager.h"
 #include "screens/ui_union.h"
-#include "screens/ui_dashboard.h"
-#include "billing_logic.h" // Needed to call validation functions
-#include "blynkGsm_logic.h"   // Needed to sync revenue to phone
+#include "billing_logic.h" 
+#include "cloudGsm_logic.h"
 
-lv_obj_t* ui_union_screen = NULL;
+// --- 1. LOCAL DATABASE (Now inside UI for localized validation) ---
+struct UnionMember {
+    String id;
+    String branch;
+    String unionType;
+    float fee;
+};
 
-// static lv_obj_t * union_screen;
-static lv_obj_t * kb;
-static lv_obj_t * ta; // Text area for Station ID
+static UnionMember unionDb[] = {
+    {"100", "Ikeja", "Park Fee", 200.0},
+    {"101", "Oshodi", "Park Fee", 200.0},
+    {"200", "Lekki", "Maintenance", 500.0},
+    {"300", "Ajah", "Checkpoint", 100.0},
+    {"400", "Yaba", "Emergency", 150.0}
+};
+const int dbSize = sizeof(unionDb) / sizeof(unionDb[0]);
+
+// --- 2. UI STATE & KEYPAD MAP ---
 static String current_selected_union = "";
+static String entered_id = "";
+static bool is_keyboard_open = false;
 
-// --- Helper: Show Message Box ---
-void show_status_msg(const char * msg, lv_color_t color) {
-    // Create the message box on the CURRENT screen, not NULL (NULL creates it on a top layer that can freeze)
-    lv_obj_t * mbox = lv_msgbox_create(ui_union_screen, "Union Status", msg, NULL, true); 
-    lv_obj_set_style_bg_color(mbox, color, 0);
-    lv_obj_set_style_text_color(mbox, lv_color_white(), 0);
-    lv_obj_center(mbox);
-    
-    // Auto-delete after 2 seconds
-    lv_obj_del_delayed(mbox, 2000);
-}
+// Button Map for Keypad: {x, y, w, h, label}
+struct Key { int x; int y; const char* val; };
+static Key keypad[12] = {
+    {10, 130, "1"}, {115, 130, "2"}, {220, 130, "3"},
+    {10, 165, "4"}, {115, 165, "5"}, {220, 165, "6"},
+    {10, 200, "7"}, {115, 200, "8"}, {220, 200, "9"},
+    {10, 235, "CLR"}, {115, 235, "0"}, {220, 235, "OK"} 
+};
 
-// Event for the Keyboard "Check" icon
-static void kb_event_cb(lv_event_t * e) {
-    lv_event_code_t code = lv_event_get_code(e);
-
-    // LV_EVENT_READY is triggered by the "Check" (Enter) icon
-    if(code == LV_EVENT_READY) {
-        const char * entered_id = lv_textarea_get_text(ta);
-        
-        // Use the logic function we created at billing_logic
-        // the funtion validate base on the input provided here to 
-        // return either 1 or 2
-        int status = validate_union_id_status(String(entered_id), current_selected_union);
-
-        if(status == 1) {
-            show_status_msg("Paid Successfully!", lv_palette_main(LV_PALETTE_GREEN));
-            blynk_gsm_sync(); // Push new revenue to Blynk immediately
-        } else {
-            show_status_msg("Incorrect ID", lv_palette_main(LV_PALETTE_RED));
+// --- 3. VALIDATION LOGIC ---
+int validate_union_id_status(String inputId, String selectedUnion) {
+    for (int i = 0; i < dbSize; i++) {
+        if (unionDb[i].id == inputId) {
+            if (selectedUnion.indexOf(unionDb[i].unionType) != -1) {
+                dailyUnionTotal += unionDb[i].fee; // Global from billing_logic
+                validCheckinsToday++;
+                return 1; // Success
+            } else {
+                return 2; // Wrong Union
+            }
         }
-
-        // Clean up: Reset text and hide keyboard/textarea
-        lv_textarea_set_text(ta, "");
-        lv_obj_add_flag(ta, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(kb, LV_OBJ_FLAG_HIDDEN);
     }
-
-    // Added: Hide keyboard if user clicks "Cancel" (the X button on some kbs)
-    if(code == LV_EVENT_CANCEL) {
-        lv_obj_add_flag(ta, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(kb, LV_OBJ_FLAG_HIDDEN);
-    }
+    return 0; // Not Found
 }
 
-// Event for the 4 Grid Buttons
-static void union_btn_event_cb(lv_event_t * e) {
-    lv_obj_t * btn = lv_event_get_target(e);
-    
-    // Safety check: get label text
-    lv_obj_t * label = lv_obj_get_child(btn, 1); 
-    if (label == NULL) return;
-    
-    String btnText = lv_label_get_text(label);
-
-    // Clean the string (e.g., "Park Fee (N200)" -> "Park Fee")
-   if(btnText.indexOf("Park") != -1) current_selected_union = "Park Fee";
-    else if(btnText.indexOf("Maintenance") != -1) current_selected_union = "Maintenance";
-    else if(btnText.indexOf("Checkpoint") != -1) current_selected_union = "Checkpoint";
-    else current_selected_union = "Emergency";
-
-    Serial.printf("Selected for Validation: %s\n", current_selected_union.c_str());
-    
-    // SHOW AND MOVE TO FRONT
-    lv_obj_clear_flag(ta, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_clear_flag(kb, LV_OBJ_FLAG_HIDDEN);
-    lv_textarea_set_text(ta, "");
-
-    // FORCE TO FRONT: This ensures the list doesn't hide the input
-    lv_obj_move_foreground(ta);
-    lv_obj_move_foreground(kb);
+void show_status_msg(const char * msg, uint32_t color) {
+    M5.Display.fillRoundRect(40, 100, 240, 60, 8, color);
+    M5.Display.setTextColor(TFT_WHITE);
+   M5.Display.setTextSize(1);              // Force size back to small
+    M5.Display.setFont(&fonts::FreeSans9pt7b);
+    M5.Display.drawCenterString(msg, 160, 122);
+    delay(1500);
+    ui_union_init(); 
 }
 
+void draw_numeric_kb() {
+    M5.Display.startWrite();
+    M5.Display.fillRect(0, 80, 320, 160, TFT_BLACK);
+    
+    // Display Box
+    M5.Display.drawRect(20, 85, 280, 35, TFT_WHITE);
+    M5.Display.setTextColor(TFT_GREEN);
+    M5.Display.setTextSize(1);              // Force size back to small
+    M5.Display.setFont(&fonts::FreeSans9pt7b);
+    M5.Display.drawString("ID: " + entered_id, 30, 95);
 
+    // Keys
+    M5.Display.setTextColor(TFT_WHITE);
+    for(int i=0; i<12; i++) {
+        uint32_t btnCol = (i == 11) ? TFT_GREEN : (i == 9 ? TFT_RED : 0x3333);
+        M5.Display.fillRoundRect(keypad[i].x, keypad[i].y, 95, 30, 4, btnCol);
+        M5.Display.drawCenterString(keypad[i].val, keypad[i].x + 47, keypad[i].y + 7);
+    }
+    M5.Display.endWrite();
+}
 
 void ui_union_init(void) {
-    ui_union_screen = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(ui_union_screen, lv_color_black(), 0);
+    is_keyboard_open = false;
+    entered_id = "";
+    M5.Display.fillScreen(TFT_BLACK);
+    M5.Display.setTextSize(1);              // Force size back to small
+    M5.Display.setFont(&fonts::FreeSans9pt7b);
+    ui_create_header();
 
-    // 1. Header
-    lv_obj_t * label = lv_label_create(ui_union_screen);
-    lv_label_set_text(label, "UNION VALIDATION");
-    lv_obj_align(label, LV_ALIGN_TOP_MID, 0, 10);
+    M5.Display.drawCenterString("UNION VALIDATION", 160, 45);
+    M5.Display.fillRoundRect(5, 40, 50, 35, 4, TFT_DARKGREY);
+    M5.Display.drawCenterString("<", 30, 50);
 
-    // 2. Buttons List (Moved up slightly)
-    lv_obj_t * list = lv_list_create(ui_union_screen);
-    lv_obj_set_size(list, 280, 140);
-    lv_obj_align(list, LV_ALIGN_TOP_MID, 0, 45);
+    // List of Unions
+    const char* labels[] = {"Park Fee (N200)", "Maintenance", "Checkpoint (N100)", "Emergency Levy"};
+    for(int i=0; i<4; i++) {
+        int y = 85 + (i * 38);
+        M5.Display.fillRoundRect(10, y, 300, 32, 4, 0x1A1A);
+        M5.Display.drawString(labels[i], 20, y + 8);
+    }
+}
 
-    lv_obj_t * b1 = lv_list_add_btn(list, LV_SYMBOL_HOME, "Park Fee (N200)");
-    lv_obj_t * b2 = lv_list_add_btn(list, LV_SYMBOL_SETTINGS, "Maintenance");
-    lv_obj_t * b3 = lv_list_add_btn(list, LV_SYMBOL_OK, "Checkpoint (N100)");
-    lv_obj_t * b4 = lv_list_add_btn(list, LV_SYMBOL_WARNING, "Emergency Levy");
+void ui_union_handle_touch(m5::touch_detail_t &t) {
+    // 1. Initial Guard: Only process when first pressed to prevent double-triggers
+    if (!t.wasPressed()) return;
 
-    lv_obj_add_event_cb(b1, union_btn_event_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_add_event_cb(b2, union_btn_event_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_add_event_cb(b3, union_btn_event_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_add_event_cb(b4, union_btn_event_cb, LV_EVENT_CLICKED, NULL);
+    // 2. State-Based Logic: Is the user typing or looking at the list?
+    if (!is_keyboard_open) {
+        
+        // --- WIDGET: BACK BUTTON ---
+        // Using your new navigation system instead of a raw callback
+        if (t.x > 10 && t.x < 70 && t.y > 40 && t.y < 70) {
+            M5.Speaker.tone(1000, 50); // Audio feedback
+            ui_goto_page(UI_PAGE_DASHBOARD);
+            return; // Exit early so we don't trigger list selection by mistake
+        }
 
-    // 3. Text Area - MOVED UP so the keyboard doesn't hide it
-    ta = lv_textarea_create(ui_union_screen);
-    lv_obj_set_size(ta, 240, 45);
-    // Align to the bottom of the list, but above the keyboard
-    lv_obj_align(ta, LV_ALIGN_TOP_MID, 0, 60); 
-    lv_textarea_set_placeholder_text(ta, "Enter ID");
-    lv_obj_add_flag(ta, LV_OBJ_FLAG_HIDDEN);
+        // --- WIDGET: UNION LIST SELECTION ---
+        if (t.y > 85 && t.y < 240) {
+            int idx = (t.y - 85) / 38;
+            const char* types[] = {"Park Fee", "Maintenance", "Checkpoint", "Emergency"};
+            
+            if (idx >= 0 && idx < 4) {
+                current_selected_union = types[idx];
+                is_keyboard_open = true;
+                M5.Speaker.tone(1500, 50);
+                draw_numeric_kb(); // This "opens" the keyboard overlay
+            }
+        }
+    } 
+    else {
+        // --- WIDGET: NUMERIC KEYBOARD LOGIC ---
+        // This only runs when is_keyboard_open is true
+        for(int i = 0; i < 12; i++) {
+            if (t.x > keypad[i].x && t.x < (keypad[i].x + 95) && 
+                t.y > keypad[i].y && t.y < (keypad[i].y + 30)) {
+                
+                M5.Speaker.tone(2000, 20); // Quick click sound
+                String val = keypad[i].val;
 
-    // 4. Keyboard
-    kb = lv_keyboard_create(ui_union_screen);
-    lv_keyboard_set_mode(kb, LV_KEYBOARD_MODE_TEXT_UPPER); 
-    lv_obj_set_size(kb, 320, 140);
-    lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_keyboard_set_textarea(kb, ta);
-    lv_obj_add_flag(kb, LV_OBJ_FLAG_HIDDEN);
-    
-    lv_obj_add_event_cb(kb, kb_event_cb, LV_EVENT_ALL, NULL); // Changed to ALL for safety
-
-
-    // 5. Back Button
-    lv_obj_t * back_btn = lv_btn_create(ui_union_screen);
-    lv_obj_set_size(back_btn, 40, 30); // Smaller back button
-    lv_obj_align(back_btn, LV_ALIGN_TOP_LEFT, 5, 5);
-    lv_obj_t * back_label = lv_label_create(back_btn);
-    lv_label_set_text(back_label, LV_SYMBOL_LEFT);
-    lv_obj_add_event_cb(back_btn, ui_back_to_dash_cb, LV_EVENT_CLICKED, NULL);
-
+                if (val == "OK") {
+                    int res = validate_union_id_status(entered_id, current_selected_union);
+                    if(res == 1) show_status_msg("PAID SUCCESS!", TFT_GREEN);
+                    else if(res == 2) show_status_msg("WRONG UNION", 0xEAA0); 
+                    else show_status_msg("INVALID ID", TFT_RED);
+                    
+                    // Optional: Close keyboard after success? 
+                    // is_keyboard_open = false; 
+                    // ui_union_init(); 
+                } 
+                else if (val == "CLR") {
+                    entered_id = "";
+                } 
+                else if (entered_id.length() < 6) {
+                    entered_id += val;
+                }
+                
+                // Refresh the display to show the new digits
+                if (is_keyboard_open) draw_numeric_kb(); 
+                break; 
+            }
+        }
+    }
 }

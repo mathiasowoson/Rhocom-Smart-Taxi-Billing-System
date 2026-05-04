@@ -1,9 +1,8 @@
 #ifndef UI_MANAGER_H
 #define UI_MANAGER_H
 
-#include "config.h"
+#include <M5Unified.h>
 
-// 1. The Master List of all pages
 typedef enum {
     UI_PAGE_DASHBOARD, 
     UI_PAGE_PASSENGER, 
@@ -14,22 +13,12 @@ typedef enum {
     UI_PAGE_LOGOUT     
 } ui_page_t;
 
-// 2. Navigation & Manager Functions
+// Maintain original function signatures
 void ui_init(void);
+void ui_manager_handle_touch(m5::touch_detail_t &t);
+void ui_create_header(void); // Removed parent as M5Unified uses a global display
 void ui_goto_page(ui_page_t page);
-void ui_back_to_dash_cb(lv_event_t * e);
-
-// 3. Page Initialization Functions (The "Factories")
-// These MUST return lv_obj_t* now so the manager can store them in RAM
-// lv_obj_t* ui_dashboard_init(void);
-// lv_obj_t* ui_passenger_init(void);
-// lv_obj_t* ui_union_init(void);    
-// lv_obj_t* ui_reports_init(void);  
-// lv_obj_t* ui_settings_init(void); 
-// lv_obj_t* ui_history_init(void);  
-
-// 4. Shared UI Elements
-void ui_create_header(lv_obj_t* parent);
 void ui_update_status_bar(bool gps_fixed, bool cloud_conn, int batt);
+void ui_back_to_dash_cb(void); // Signature kept simple for your button logic
 
 #endif

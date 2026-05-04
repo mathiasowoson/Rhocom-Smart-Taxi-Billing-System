@@ -1,154 +1,129 @@
-#include "ui_manager.h"
 #include "screens/ui_settings.h"
-#include "screens/ui_dashboard.h"
 #include "driver_logic.h"
-#include "config.h"
 
-lv_obj_t * ui_settings_screen = NULL;
+static bool is_reset_modal_active = false;
 
-// --- Event Handlers ---
+void ui_settings_init(void) {
+    is_reset_modal_active = false;
+    M5.Display.startWrite();
+    M5.Display.fillScreen(TFT_BLACK);
+    M5.Display.setTextSize(1);              // Force size back to small
+    M5.Display.setFont(&fonts::FreeSans9pt7b);
+    ui_create_header(); // Global header
 
-static void brightness_slider_cb(lv_event_t * e) {
-    lv_obj_t * slider = lv_event_get_target(e);
-    driver_set_brightness(lv_slider_get_value(slider));
-}
+    // 1. BACK Button
+    M5.Display.fillRoundRect(5, 40, 50, 35, 4, TFT_DARKGREY);
+    M5.Display.setTextColor(TFT_WHITE);
+    M5.Display.drawCenterString("<", 30, 50);
 
-static void mode_sw_cb(lv_event_t * e) {
-    lv_obj_t * sw = lv_event_get_target(e);
-    isPublicMode = lv_obj_has_state(sw, LV_STATE_CHECKED);
-    // You could also call blynk_sync_data() here if needed
-}
+    // 2. Brightness Section (Replacing LVGL Slider)
+    M5.Display.drawString("Brightness", 20, 85);
+    M5.Display.drawRect(20, 105, 280, 20, TFT_WHITE); // Slider track
+    // Map current brightness (10-255) to bar width (0-278)
+    int barWidth = map(last_brightness, 10, 255, 0, 276);
+    M5.Display.fillRect(22, 107, barWidth, 16, TFT_ORANGE);
 
-static void sound_sw_cb(lv_event_t * e) {
-    lv_obj_t * sw = lv_event_get_target(e);
-    driver_toggle_sound(lv_obj_has_state(sw, LV_STATE_CHECKED));
-}
+    // 3. Mode Toggle (Replacing LVGL Switch)
+    M5.Display.drawString("Public Mode", 20, 140);
+    uint32_t toggleCol = isPublicMode ? TFT_GREEN : TFT_DARKGREY;
+    M5.Display.fillRoundRect(240, 135, 60, 25, 12, toggleCol);
+    M5.Display.fillCircle(isPublicMode ? 285 : 255, 147, 10, TFT_WHITE);
 
-static void factory_reset_confirm_cb(lv_event_t * e) {
-    lv_obj_t * obj = lv_event_get_current_target(e);
-    uint16_t btn_id = lv_msgbox_get_active_btn(obj);
+    // 4. Action Buttons (Replacing LVGL List)
+    // Restart System
+    M5.Display.fillRoundRect(20, 175, 135, 40, 4, 0x5555); // Grey
+    M5.Display.drawCenterString("Restart", 87, 188);
 
-    if(btn_id == 0) { // Index 0 is "Proceed"
-        driver_factory_reset(); // NOW we do the hardware reset
-    } else {
-        lv_msgbox_close(obj);   // Just close the box and go back to settings
-    }
+    // Shutdown
+    M5.Display.fillRoundRect(165, 175, 135, 40, 4, TFT_RED);
+    M5.Display.drawCenterString("Shutdown", 232, 188);
+
+    // Factory Reset (Bottom)
+    M5.Display.setTextColor(TFT_ORANGE);
+    M5.Display.drawCenterString("FACTORY RESET", 160, 225);
+    
+    M5.Display.endWrite();
 }
 
 void ui_show_factory_reset_warning(void) {
-    static const char * btns[] = {"Proceed", "Cancel", ""};
-
-    lv_obj_t * mbox = lv_msgbox_create(NULL, "FACTORY RESET", 
-        "This will wipe all revenue and settings. Are you sure?", 
-        btns, true);
+    is_reset_modal_active = true;
+    M5.Display.startWrite();
+    // Dim background using the solid fill method we established
+    M5.Display.fillRect(0, 0, 320, 240, M5.Display.color565(20, 20, 20));
     
-    lv_obj_set_style_bg_color(mbox, lv_palette_main(LV_PALETTE_RED), 0);
-    lv_obj_set_style_text_color(mbox, lv_color_white(), 0);
-    lv_obj_center(mbox);
+    M5.Display.fillRoundRect(30, 60, 260, 120, 8, TFT_RED);
+    M5.Display.setTextColor(TFT_WHITE);
+    M5.Display.setTextSize(1);              // Force size back to small
+    M5.Display.setFont(&fonts::FreeSans9pt7b);
+    M5.Display.drawCenterString("FACTORY RESET?", 160, 80);
+    M5.Display.drawCenterString("Wipe all revenue data?", 160, 105);
 
-    // This tells the box to run 'factory_reset_confirm_cb' when a button is clicked
-    lv_obj_add_event_cb(mbox, factory_reset_confirm_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    // Modal Buttons
+    M5.Display.fillRoundRect(50, 135, 90, 35, 4, TFT_BLACK);
+    M5.Display.drawCenterString("YES", 95, 145);
+    
+    M5.Display.fillRoundRect(180, 135, 90, 35, 4, TFT_DARKGREY);
+    M5.Display.drawCenterString("NO", 225, 145);
+    M5.Display.endWrite();
 }
 
-static void action_btn_cb(lv_event_t * e) {
-    // Get the hidden "user data" string we attached to the button (e.g., "off", "reset", "factory")
-    const char * action = (const char *)lv_event_get_user_data(e);
-    
-    if (strcmp(action, "off") == 0) {
-        // Still works: Shuts down the M5Core2 immediately
-        driver_system_shutdown();
-    } 
-    else if (strcmp(action, "reset") == 0) {
-        // Still works: Reboots the ESP32 immediately
-        driver_system_restart();
-    } 
-    else if (strcmp(action, "factory") == 0) {
-        // CHANGED: Instead of resetting now, show the warning box
-        ui_show_factory_reset_warning(); 
+void ui_settings_handle_touch(m5::touch_detail_t &t) {
+    if (!t.wasPressed()) return;
+
+    // 1. Handle Reset Modal (Highest Priority)
+    if (is_reset_modal_active) {
+        if (t.y > 135 && t.y < 170) {
+            // YES Button
+            if (t.x > 50 && t.x < 140) {
+                if (isSoundEnabled) M5.Speaker.tone(1000, 100);
+                driver_factory_reset(); 
+            }
+            // NO Button (Reload screen to close modal)
+            if (t.x > 180 && t.x < 270) {
+                is_reset_modal_active = false;
+                ui_settings_init(); 
+            }
+        }
+        return; // Lock interaction to the modal only
     }
-}
 
+    // 2. Back Button (Top Left)
+    if (t.y > 40 && t.y < 75 && t.x < 60) {
+        if (isSoundEnabled) M5.Speaker.tone(1000, 50);
+        ui_goto_page(UI_PAGE_DASHBOARD); // Centralized transition
+        return;
+    }
 
-void ui_settings_init(void) {
-    ui_settings_screen = lv_obj_create(NULL);
+    // 3. Brightness Slider Widget
+    if (t.y > 95 && t.y < 130 && t.x > 20 && t.x < 300) {
+        int newBr = map(t.x, 20, 300, 10, 255);
+        driver_set_brightness(newBr);
+        ui_settings_init(); // Redraw to update the visual slider bar
+    }
 
-    // 1. Header & Back Button
-    lv_obj_t * header = lv_label_create(ui_settings_screen);
-    lv_label_set_text(header, "SYSTEM SETTINGS");
-    lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 10);
+    // 4. Public Mode Toggle Widget
+    if (t.y > 135 && t.y < 165 && t.x > 230) {
+        isPublicMode = !isPublicMode;
+        if (isSoundEnabled) M5.Speaker.tone(1500, 30);
+        ui_settings_init(); // Redraw to update toggle switch visual
+    }
 
-    lv_obj_t * back_btn = lv_btn_create(ui_settings_screen);
-    lv_obj_set_size(back_btn, 50, 35);
-    lv_obj_align(back_btn, LV_ALIGN_TOP_LEFT, 5, 5);
-    lv_obj_t * back_lbl = lv_label_create(back_btn);
-    lv_label_set_text(back_lbl, LV_SYMBOL_LEFT);
-    lv_obj_add_event_cb(back_btn, ui_back_to_dash_cb, LV_EVENT_CLICKED, NULL);
-
-
-    // 2. Scrolling Container for Settings
-    lv_obj_t * cont = lv_obj_create(ui_settings_screen);
-    lv_obj_set_size(cont, 320, 190);
-    lv_obj_align(cont, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_set_flex_flow(cont, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_all(cont, 15, 0);
-
-    // --- Public/Private Mode ---
-    lv_obj_t * row_mode = lv_obj_create(cont);
-    lv_obj_set_size(row_mode, 270, 45);
-    lv_obj_t * lbl_mode = lv_label_create(row_mode);
-    lv_label_set_text(lbl_mode, "Public Mode");
-    lv_obj_align(lbl_mode, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_t * sw_mode = lv_switch_create(row_mode);
-    lv_obj_align(sw_mode, LV_ALIGN_RIGHT_MID, 0, 0);
-    if(isPublicMode) lv_obj_add_state(sw_mode, LV_STATE_CHECKED);
-    lv_obj_add_event_cb(sw_mode, mode_sw_cb, LV_EVENT_VALUE_CHANGED, NULL);
-
-    // --- Brightness ---
-    lv_obj_t * row_br = lv_obj_create(cont);
-    lv_obj_set_size(row_br, 270, 60);
-    lv_obj_t * lbl_br = lv_label_create(row_br);
-    lv_label_set_text(lbl_br, "Brightness");
-    lv_obj_align(lbl_br, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_t * slider = lv_slider_create(row_br);
-    lv_obj_set_size(slider, 180, 10);
-    lv_obj_align(slider, LV_ALIGN_BOTTOM_MID, 0, -5);
-    lv_slider_set_range(slider, 10, 255);
-    lv_slider_set_value(slider, last_brightness, LV_ANIM_OFF);
-    lv_obj_add_event_cb(slider, brightness_slider_cb, LV_EVENT_VALUE_CHANGED, NULL);
-
-    // --- Sound Toggle ---
-    lv_obj_t * row_snd = lv_obj_create(cont);
-    lv_obj_set_size(row_snd, 270, 45);
-    lv_obj_t * lbl_snd = lv_label_create(row_snd);
-    lv_label_set_text(lbl_snd, "Button Sounds");
-    lv_obj_align(lbl_snd, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_t * sw_snd = lv_switch_create(row_snd);
-    lv_obj_align(sw_snd, LV_ALIGN_RIGHT_MID, 0, 0);
-    if(isSoundEnabled) lv_obj_add_state(sw_snd, LV_STATE_CHECKED);
-    lv_obj_add_event_cb(sw_snd, sound_sw_cb, LV_EVENT_VALUE_CHANGED, NULL);
-
-    // --- Action Buttons ---
-    lv_obj_t * btn_restart = lv_btn_create(cont);
-    lv_obj_set_size(btn_restart, 270, 40);
-    lv_obj_t * lbl_res = lv_label_create(btn_restart);
-    lv_label_set_text(lbl_res, "Restart System");
-    lv_obj_center(lbl_res);
-    lv_obj_add_event_cb(btn_restart, action_btn_cb, LV_EVENT_CLICKED, (void*)"reset");
-
-    lv_obj_t * btn_factory = lv_btn_create(cont);
-    lv_obj_set_size(btn_factory, 270, 40);
-    lv_obj_set_style_bg_color(btn_factory, lv_palette_main(LV_PALETTE_ORANGE), 0);
-    lv_obj_t * lbl_fac = lv_label_create(btn_factory);
-    lv_label_set_text(lbl_fac, "Factory Reset");
-    lv_obj_center(lbl_fac);
-    lv_obj_add_event_cb(btn_factory, action_btn_cb, LV_EVENT_CLICKED, (void*)"factory");
-
-    lv_obj_t * btn_off = lv_btn_create(cont);
-    lv_obj_set_size(btn_off, 270, 40);
-    lv_obj_set_style_bg_color(btn_off, lv_palette_main(LV_PALETTE_RED), 0);
-    lv_obj_t * lbl_off = lv_label_create(btn_off);
-    lv_label_set_text(lbl_off, "SHUTDOWN");
-    lv_obj_center(lbl_off);
-    lv_obj_add_event_cb(btn_off, action_btn_cb, LV_EVENT_CLICKED, (void*)"off");
-
+    // 5. Bottom Action Buttons (Restart/Shutdown)
+    if (t.y > 175 && t.y < 215) {
+        // Restart
+        if (t.x > 20 && t.x < 155) {
+            if (isSoundEnabled) M5.Speaker.tone(1200, 50);
+            driver_system_restart();
+        }
+        // Shutdown
+        if (t.x > 165 && t.x < 300) {
+            if (isSoundEnabled) M5.Speaker.tone(800, 50);
+            driver_system_shutdown();
+        }
+    }
+    
+    // 6. Factory Reset Warning Trigger
+    if (t.y > 215 && t.x > 100 && t.x < 220) {
+        ui_show_factory_reset_warning(); // Opens the reset modal
+    }
 }

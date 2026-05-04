@@ -1,99 +1,80 @@
-#include "ui_manager.h"
 #include "screens/ui_dashboard.h"
 
-// Tell the compiler these are external CONSTANT arrays (how LVGL stores fonts)
-extern "C" {
-    extern const lv_font_t lv_font_montserrat_48;
-    extern const lv_font_t lv_font_montserrat_12;
-}
+float current_speed = 0.0;
+bool dashboard_needs_update = false;
 
-lv_obj_t * ui_dashboard_screen = NULL;
-lv_obj_t * speed_label = NULL;
+// Define button areas (Grid-like hotspots)
+struct DashboardBtn {
+    int x, y, w, h;
+    ui_page_t target;
+    const char* label;
+};
 
-// Event handler for dashboard buttons
-static void dashboard_event_cb(lv_event_t * e) {
-    // Get the Enum directly from the button
-    ui_page_t target_page = (ui_page_t)(intptr_t)lv_event_get_user_data(e);
-
-    // Tell the manager to go there. No switch-case needed!
-    ui_goto_page(target_page);
-}
+DashboardBtn menu_btns[] = {
+    {10,  110, 145, 40, UI_PAGE_PASSENGER, "PASSENGERS"},
+    {165, 110, 145, 40, UI_PAGE_UNION,     "UNION/LEVY"},
+    {10,  155, 145, 40, UI_PAGE_REPORTS,   "REPORTS"},
+    {165, 155, 145, 40, UI_PAGE_SETTINGS,  "SETTINGS"},
+    {10,  200, 145, 40, UI_PAGE_HISTORY,   "HISTORY"},
+    {165, 200, 145, 40, UI_PAGE_LOGOUT,    "LOGOUT"}
+};
 
 void ui_dashboard_init(void) {
-    ui_dashboard_screen = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(ui_dashboard_screen, lv_color_hex(0x000000), 0);
-
-    // 1. Create the Global Rhocom Header
-    ui_create_header(ui_dashboard_screen);
-
-    // 2. SPEEDOMETER AREA (Added between Header and Buttons)
-    speed_label = lv_label_create(ui_dashboard_screen);
-    lv_obj_set_style_text_font(speed_label, &lv_font_montserrat_48, 0); 
-    lv_obj_set_style_text_color(speed_label, lv_color_hex(0xFFFFFF), 0);
-    lv_label_set_text(speed_label, "00");
-    lv_obj_align(speed_label, LV_ALIGN_TOP_MID, 0, 45); // Just below header
-
-    lv_obj_t * unit_lbl = lv_label_create(ui_dashboard_screen);
-    lv_label_set_text(unit_lbl, "km/h");
-    lv_obj_set_style_text_color(unit_lbl, lv_color_hex(0xFF0000), 0); // Red Accent
-    lv_obj_align_to(unit_lbl, speed_label, LV_ALIGN_OUT_RIGHT_BOTTOM, 5, -10);
-
-    // 2. Create a Container for the 6 Buttons (Grid)
-    lv_obj_t * cont = lv_obj_create(ui_dashboard_screen);
-    lv_obj_set_size(cont, 300, 130);
-    lv_obj_align(cont, LV_ALIGN_BOTTOM_MID, 0, -5);
-    lv_obj_set_style_bg_opa(cont, 0, 0); // Transparent background
-    lv_obj_set_style_border_width(cont, 0, 0);
-
-    // Define 2 columns and 3 rows
-    static lv_coord_t col_dsc[] = {140, 140, LV_GRID_TEMPLATE_LAST};
-    static lv_coord_t row_dsc[] = {50, 50, 50, LV_GRID_TEMPLATE_LAST};
-    lv_obj_set_layout(cont, LV_LAYOUT_GRID);
-    lv_obj_set_grid_dsc_array(cont, col_dsc, row_dsc);
-
-    // 3. Helper to create buttons inside the grid
-    const char * btn_names[] = {"PASSENGERS", "UNION/LEVY", "REPORTS", "SETTINGS", "HISTORY", "LOGOUT"};
-
-    // This array MAPS the button name to the Page ID
-    ui_page_t page_map[] = { 
-       UI_PAGE_PASSENGER, 
-       UI_PAGE_UNION, 
-       UI_PAGE_REPORTS, 
-       UI_PAGE_SETTINGS, 
-       UI_PAGE_HISTORY, 
-       UI_PAGE_LOGOUT 
-    };
+    M5.Display.startWrite();
     
-    for(int i = 0; i < 6; i++) {
-        int col = i % 2;
-        int row = i / 2;
+    // 1. Draw Speedometer Area
+    M5.Display.setTextColor(TFT_WHITE);
+    M5.Display.setTextSize(1);
+    M5.Display.setFont(&fonts::FreeSansBold24pt7b); // Equivalent to Montserrat 48
+    M5.Display.drawCenterString("00", 160, 45);
+    
+    M5.Display.setTextColor(TFT_RED);
+    M5.Display.setTextSize(1);
+    M5.Display.setFont(&fonts::FreeSans9pt7b); // Equivalent to Montserrat 12
+    M5.Display.drawString("km/h", 205, 75);
 
-        lv_obj_t * btn = lv_btn_create(cont);
-        lv_obj_set_style_bg_color(btn, lv_color_hex(0x1A1A1A), 0); // Dark Grey
-        lv_obj_set_style_border_color(btn, lv_color_hex(0x444444), 0);
-        lv_obj_set_style_border_width(btn, 1, 0);
-        lv_obj_set_grid_cell(btn, LV_GRID_ALIGN_STRETCH, col, 1, LV_GRID_ALIGN_STRETCH, row, 1);
-        
-        // Pass the index (i+1) as user data so the callback knows which button was clicked
-        lv_obj_add_event_cb(btn, dashboard_event_cb, LV_EVENT_CLICKED, (void*)page_map[i]);
-
-        lv_obj_t * label = lv_label_create(btn);
-        lv_label_set_text(label, btn_names[i]);
-        lv_obj_set_style_text_font(label, &lv_font_montserrat_12, 0);
-        lv_obj_center(label);
+    // 2. Draw Grid Buttons
+    M5.Display.setFont(&fonts::FreeSans9pt7b);
+    for (int i = 0; i < 6; i++) {
+        M5.Display.fillRoundRect(menu_btns[i].x, menu_btns[i].y, menu_btns[i].w, menu_btns[i].h, 4, 0x1A1A); // Hex 0x1A1A1A
+        M5.Display.drawRoundRect(menu_btns[i].x, menu_btns[i].y, menu_btns[i].w, menu_btns[i].h, 4, 0x4444); // Border
+        M5.Display.setTextColor(TFT_WHITE);
+        M5.Display.setTextSize(1);
+        M5.Display.drawCenterString(menu_btns[i].label, menu_btns[i].x + (menu_btns[i].w/2), menu_btns[i].y + 12);
     }
     
+    M5.Display.endWrite();
 }
-
 
 void ui_update_dashboard_speed(float speed) {
-    // if(speed_label != NULL && lv_scr_act() == ui_dashboard_screen) {
-    //     lv_label_set_text_fmt(speed_label, "%02d", (int)speed);
-    // }
-    if(speed_label != NULL) { 
-        lv_label_set_text_fmt(speed_label, "%02d", (int)speed);
-    } else {
-        Serial.println("UI ERROR: speed_label is NULL!");
-    }
+    current_speed = speed;
+    
+    // Only update the speed text area to prevent flickering the whole screen
+    M5.Display.fillRect(100, 45, 120, 40, TFT_BLACK); 
+    M5.Display.setTextColor(TFT_WHITE);
+    M5.Display.setTextSize(1);
+    M5.Display.setFont(&fonts::FreeSansBold24pt7b);
+    
+    char buf[4];
+    sprintf(buf, "%02d", (int)speed);
+    M5.Display.drawCenterString(buf, 160, 45);
 }
 
+void ui_dashboard_handle_touch(m5::touch_detail_t &t) {
+    if (t.wasPressed()) {
+        for (int i = 0; i < 6; i++) {
+            // Check if touch is within button boundaries
+            if (t.x >= menu_btns[i].x && t.x <= (menu_btns[i].x + menu_btns[i].w) &&
+                t.y >= menu_btns[i].y && t.y <= (menu_btns[i].y + menu_btns[i].h)) {
+                
+                // Visual feedback (Flash button)
+                M5.Display.drawRoundRect(menu_btns[i].x, menu_btns[i].y, menu_btns[i].w, menu_btns[i].h, 4, TFT_WHITE);
+                M5.Speaker.tone(2000, 50);
+                
+                // Navigation
+                ui_goto_page(menu_btns[i].target);
+                break;
+            }
+        }
+    }
+}

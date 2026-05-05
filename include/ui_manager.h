@@ -3,6 +3,8 @@
 
 #include <M5Unified.h>
 
+extern int ui_scroll_offset;
+
 typedef enum {
     UI_PAGE_DASHBOARD, 
     UI_PAGE_PASSENGER, 
@@ -19,6 +21,6 @@ void ui_manager_handle_touch(m5::touch_detail_t &t);
 void ui_create_header(void); // Removed parent as M5Unified uses a global display
 void ui_goto_page(ui_page_t page);
 void ui_update_status_bar(bool gps_fixed, bool cloud_conn, int batt);
-void ui_back_to_dash_cb(void); // Signature kept simple for your button logic
+void draw_scrollable_button(int x, int y, int w, int h, const char* label, uint32_t color);
 
 #endif

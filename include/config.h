@@ -5,7 +5,6 @@
 
 #include <Arduino.h>
 #include <M5Unified.h>
-#include <lvgl.h> 
 
 // --- System Info ---
 #define COMPANY_NAME "RHOCOM"

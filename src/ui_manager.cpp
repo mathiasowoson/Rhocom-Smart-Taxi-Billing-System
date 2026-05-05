@@ -7,6 +7,7 @@
 #include "screens/ui_history.h"
 #include "screens/ui_reports.h"
 
+int ui_scroll_offset = 0;
 static ui_page_t current_active_page = UI_PAGE_DASHBOARD;
 
 // Internal state variables to track status colors/values
@@ -14,6 +15,7 @@ static uint32_t gps_color = 0x7BEF;   // LV_PALETTE_GREY equivalent
 static uint32_t cloud_color = TFT_RED; 
 static const char* batt_sym = "F";    // Battery Full symbol representation
 static int current_batt_val = 100;
+
 
 void ui_init(void) {
     // Exactly as your original: start at dashboard
@@ -25,9 +27,11 @@ void ui_create_header(void) {
     // Blue-Grey color: 0x6477 (approximate for M5GFX)
     M5.Display.fillRect(0, 0, 320, 35, M5.Display.color565(96, 125, 139));
     
+    M5.Display.setFont(&fonts::FreeSans9pt7b);
+    M5.Display.setTextSize(1);
+
     // 2. Title: "TAXI PAY" (Aligned Left-Mid)
     M5.Display.setTextColor(TFT_WHITE);
-    M5.Display.setTextSize(1);
     M5.Display.drawString("RHOCOM", 5, 10);
 
     // 3. GPS Status (Aligned Center -20)
@@ -45,6 +49,7 @@ void ui_create_header(void) {
 
 void ui_goto_page(ui_page_t page) {
     // Clear screen for every page change as per original logic
+    ui_scroll_offset = 0;
     current_active_page = page; // Remember the new page
     M5.Display.fillScreen(TFT_BLACK);
     M5.Display.setTextSize(1);              // Force reset size
@@ -102,16 +107,12 @@ void ui_back_to_dash_cb(void) {
 
 // You'll need to make sure the dashboard handle is declared in ui_dashboard.h
 void ui_manager_handle_touch(m5::touch_detail_t &t) {
-    if (!t.wasPressed()) return; // Only process actual clicks
+    if (!t.wasPressed()) return; 
 
-    // 1. Check Global Header (Visible on ALL pages)
-    if (t.y < 35) {
-        Serial.println("Header Clicked");
-        return;
-    }
+    // Header logic (Universal)
+    if (t.y < 35) { return; }
 
-    // 2. Route the touch ONLY to the visible page
-    // This prevents the Dashboard buttons from clicking while you're in Union/Passenger
+    // 2. Route the touch to the CORRECT handler for each page
     switch (current_active_page) {
         case UI_PAGE_DASHBOARD:
             ui_dashboard_handle_touch(t); 
@@ -123,55 +124,26 @@ void ui_manager_handle_touch(m5::touch_detail_t &t) {
             ui_union_handle_touch(t); 
             break;
         case UI_PAGE_SETTINGS:
-            ui_union_handle_touch(t); 
+            ui_settings_handle_touch(t); // FIXED: Was ui_union_handle_touch
             break;
         case UI_PAGE_REPORTS:
-            ui_union_handle_touch(t); 
+            ui_reports_handle_touch(t);  // FIXED: Was ui_union_handle_touch
             break;
         case UI_PAGE_HISTORY:
-            ui_union_handle_touch(t); 
+            ui_history_handle_touch(t);  // FIXED: Was ui_union_handle_touch
             break;
-        // Add handlers for other pages as you build them
         default:
             break;
     }
 }
 
-// Add this to the bottom of your ui_manager.cpp
-
-// void ui_manager_handle_touch(m5::touch_detail_t &t) {
-//     // We only trigger when the user first lifts their finger (wasReleased)
-//     // or initially touches (wasPressed) to prevent rapid "ghost" clicking.
-//     if (t.wasPressed()) {
-//         int x = t.x;
-//         int y = t.y;
-
-//         // --- HEADER CLICKS ---
-//         // If user touches the header bar (y < 35), refresh the status
-//         if (y < 35) {
-//             ui_create_header();
-//             return;
-//         }
-
-//         // --- DASHBOARD BUTTONS ---
-//         // These coordinates assume 2 columns and 3 rows of buttons
-        
-//         // Row 1: Passenger (Left) and Union (Right)
-//         if (y > 40 && y < 100) {
-//             if (x > 10 && x < 150) ui_goto_page(UI_PAGE_PASSENGER);
-//             if (x > 170 && x < 310) ui_goto_page(UI_PAGE_UNION);
-//         }
-        
-//         // Row 2: Reports (Left) and History (Right)
-//         else if (y > 110 && y < 170) {
-//             if (x > 10 && x < 150) ui_goto_page(UI_PAGE_REPORTS);
-//             if (x > 170 && x < 310) ui_goto_page(UI_PAGE_SETTINGS);
-//         }
-
-//         // Row 3: Settings (Left) and Logout (Right)
-//         else if (y > 180 && y < 240) {
-//             if (x > 10 && x < 150) ui_goto_page(UI_PAGE_HISTORY);
-//             if (x > 170 && x < 310) ui_goto_page(UI_PAGE_LOGOUT);
-//         }
-//     }
-// }
+void draw_scrollable_button(int x, int y, int w, int h, const char* label, uint32_t color) {
+    // Basic clipping: only draw if the Y coordinate is within the list area
+    if (y >= 80 && (y + h) <= 240) {
+        M5.Display.fillRoundRect(x, y, w, h, 4, color);
+        M5.Display.setTextColor(TFT_WHITE);
+        M5.Display.setTextSize(1);
+        // Adjust text placement based on your font size
+        M5.Display.drawString(label, x + 10, y + 8); 
+    }
+}

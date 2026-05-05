@@ -1,6 +1,7 @@
 #include "screens/ui_union.h"
 #include "billing_logic.h" 
 #include "cloudGsm_logic.h"
+#include "ui_manager.h"
 
 // --- 1. LOCAL DATABASE (Now inside UI for localized validation) ---
 struct UnionMember {
@@ -83,60 +84,112 @@ void draw_numeric_kb() {
 void ui_union_init(void) {
     is_keyboard_open = false;
     entered_id = "";
+    
     M5.Display.fillScreen(TFT_BLACK);
-    M5.Display.setTextSize(1);              // Force size back to small
+    M5.Display.setTextSize(1);
     M5.Display.setFont(&fonts::FreeSans9pt7b);
     ui_create_header();
 
+    // 1. Static Title (Does not scroll)
     M5.Display.drawCenterString("UNION VALIDATION", 160, 45);
-    M5.Display.fillRoundRect(5, 40, 50, 35, 4, TFT_DARKGREY);
-    M5.Display.drawCenterString("<", 30, 50);
+    M5.Display.setTextSize(1);
+    M5.Display.setFont(&fonts::FreeSans12pt7b);
 
-    // List of Unions
-    const char* labels[] = {"Park Fee (N200)", "Maintenance", "Checkpoint (N100)", "Emergency Levy"};
-    for(int i=0; i<4; i++) {
-        int y = 85 + (i * 38);
-        M5.Display.fillRoundRect(10, y, 300, 32, 4, 0x1A1A);
-        M5.Display.drawString(labels[i], 20, y + 8);
+    // 2. List of Unions (Scrollable)
+    const char* labels[] = {"Park Fee (N200)", "Maintenance", "Checkpoint (N100)", "Emergency Levy", "Local Tax", "State Levy"};
+    for(int i = 0; i < 6; i++) {
+        // virtual_y is where the button lives in the "long" list
+        int virtual_y = 85 + (i * 38); 
+        
+        // Use the scrollable widget function we created in ui_manager
+        draw_scrollable_button(10, virtual_y, 260, 32, labels[i], 0x1A1A);
     }
+
+    // 3. Scroll Controls (Static on the right side)
+    M5.Display.fillRoundRect(280, 85, 35, 60, 4, TFT_BLUE);  // UP Arrow area
+    M5.Display.setTextSize(1);
+    M5.Display.setFont(&fonts::FreeSans12pt7b);
+    M5.Display.drawCenterString("^", 297, 105);
+    
+    M5.Display.fillRoundRect(280, 160, 35, 60, 4, TFT_BLUE); // DOWN Arrow area
+    M5.Display.setTextSize(1);
+    M5.Display.setFont(&fonts::FreeSans12pt7b);
+    M5.Display.drawCenterString("V", 297, 180);
+
+    // 4. Back Button (Static)
+    M5.Display.fillRoundRect(5, 40, 50, 35, 4, TFT_DARKGREY);
+    M5.Display.setTextSize(1);
+    M5.Display.setFont(&fonts::FreeSans12pt7b);
+    M5.Display.drawCenterString("<", 30, 50);
 }
 
 void ui_union_handle_touch(m5::touch_detail_t &t) {
-    // 1. Initial Guard: Only process when first pressed to prevent double-triggers
+
+    // --- SCROLL BUTTON DETECTION ---
+// x > 275 is the blue button area on the right
+if (t.x > 270) {
+    if (t.y > 85 && t.y < 145) { // Up Button
+        ui_scroll_offset -= 40;
+        if (ui_scroll_offset < 0) ui_scroll_offset = 0;
+        ui_union_init(); // Redraw to move content
+        return;
+    } 
+    else if (t.y > 160 && t.y < 220) { // Down Button
+        ui_scroll_offset += 40;
+        ui_union_init(); // Redraw to move content
+        return;
+    }
+}
+
     if (!t.wasPressed()) return;
 
-    // 2. State-Based Logic: Is the user typing or looking at the list?
-    if (!is_keyboard_open) {
-        
-        // --- WIDGET: BACK BUTTON ---
-        // Using your new navigation system instead of a raw callback
-        if (t.x > 10 && t.x < 70 && t.y > 40 && t.y < 70) {
-            M5.Speaker.tone(1000, 50); // Audio feedback
-            ui_goto_page(UI_PAGE_DASHBOARD);
-            return; // Exit early so we don't trigger list selection by mistake
-        }
+    // --- ZONE 1: STATIC NAVIGATION (Always works) ---
+    // Back Button
+    if (t.x > 5 && t.x < 60 && t.y > 40 && t.y < 75) {
+        M5.Speaker.tone(1000, 50);
+        is_keyboard_open = false;
+        ui_goto_page(UI_PAGE_DASHBOARD);
+        return;
+    }
 
-        // --- WIDGET: UNION LIST SELECTION ---
-        if (t.y > 85 && t.y < 240) {
-            int idx = (t.y - 85) / 38;
-            const char* types[] = {"Park Fee", "Maintenance", "Checkpoint", "Emergency"};
+    // --- ZONE 2: SCROLL CONTROLS ---
+    if (!is_keyboard_open && t.x > 275) {
+        if (t.y > 85 && t.y < 145) { // Up
+            ui_scroll_offset -= 38;
+            if (ui_scroll_offset < 0) ui_scroll_offset = 0;
+            ui_union_init();
+        } 
+        else if (t.y > 160 && t.y < 220) { // Down
+            ui_scroll_offset += 38;
+            ui_union_init();
+        }
+        return;
+    }
+
+    // --- ZONE 3: PAGE CONTENT ---
+    if (!is_keyboard_open) {
+        // Adjust touch Y by the current scroll offset
+        int virtual_y = t.y + ui_scroll_offset;
+
+        if (t.x > 10 && t.x < 270 && virtual_y > 85) {
+            int idx = (virtual_y - 85) / 38;
+            const char* types[] = {"Park Fee", "Maintenance", "Checkpoint", "Emergency", "Tax", "Levy"};
             
-            if (idx >= 0 && idx < 4) {
+            if (idx >= 0 && idx < 6) {
                 current_selected_union = types[idx];
                 is_keyboard_open = true;
                 M5.Speaker.tone(1500, 50);
-                draw_numeric_kb(); // This "opens" the keyboard overlay
+                draw_numeric_kb(); 
             }
         }
     } 
     else {
-        // --- WIDGET: NUMERIC KEYBOARD LOGIC ---
-        // This only runs when is_keyboard_open is true
+        // KEYBOARD LOGIC (Same as before, static overlay)
         for(int i = 0; i < 12; i++) {
             if (t.x > keypad[i].x && t.x < (keypad[i].x + 95) && 
                 t.y > keypad[i].y && t.y < (keypad[i].y + 30)) {
                 
-                M5.Speaker.tone(2000, 20); // Quick click sound
+                M5.Speaker.tone(2000, 20);
                 String val = keypad[i].val;
 
                 if (val == "OK") {
@@ -144,19 +197,10 @@ void ui_union_handle_touch(m5::touch_detail_t &t) {
                     if(res == 1) show_status_msg("PAID SUCCESS!", TFT_GREEN);
                     else if(res == 2) show_status_msg("WRONG UNION", 0xEAA0); 
                     else show_status_msg("INVALID ID", TFT_RED);
-                    
-                    // Optional: Close keyboard after success? 
-                    // is_keyboard_open = false; 
-                    // ui_union_init(); 
                 } 
-                else if (val == "CLR") {
-                    entered_id = "";
-                } 
-                else if (entered_id.length() < 6) {
-                    entered_id += val;
-                }
+                else if (val == "CLR") { entered_id = ""; } 
+                else if (entered_id.length() < 6) { entered_id += val; }
                 
-                // Refresh the display to show the new digits
                 if (is_keyboard_open) draw_numeric_kb(); 
                 break; 
             }

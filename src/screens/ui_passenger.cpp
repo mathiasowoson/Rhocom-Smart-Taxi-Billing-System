@@ -49,7 +49,7 @@ void ui_refresh_passenger_list(void) {
 
     M5.Display.startWrite();
     // 1. Reset Font to Default (prevents "Big Text" bug)
-    M5.Display.setFont(NULL); 
+    M5.Display.setFont(&fonts::FreeSans9pt7b); 
     M5.Display.setTextSize(1); 
 
     // 2. Clear the scrollable area

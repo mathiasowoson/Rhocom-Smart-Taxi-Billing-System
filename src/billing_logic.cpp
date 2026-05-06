@@ -3,7 +3,9 @@
 #include <M5Unified.h>
 #include "billing_logic.h"
 
+#ifndef TINY_GSM_MODEM_SIM7600
 #define TINY_GSM_MODEM_SIM7600
+#endif
 #include <TinyGsmClient.h>
 
 #include "cloudGsm_logic.h"
@@ -246,7 +248,7 @@ void calculate_final_fare(int slot) {
         tripHistory[historyIndex].isValid = true;
 
         historyIndex = (historyIndex + 1) % 10; // Circular buffer
-        
+
         totalFaresCollectedToday += tags[slot].currentFare;
         tags[slot].isActive = false;
         tags[slot].currentFare = 0;

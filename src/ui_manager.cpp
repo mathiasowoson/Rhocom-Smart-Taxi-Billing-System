@@ -8,7 +8,7 @@
 #include "screens/ui_reports.h"
 
 int ui_scroll_offset = 0;
-static ui_page_t current_active_page = UI_PAGE_DASHBOARD;
+ui_page_t current_active_page = UI_PAGE_DASHBOARD;
 
 // Internal state variables to track status colors/values
 static uint32_t gps_color = 0x7BEF;   // LV_PALETTE_GREY equivalent

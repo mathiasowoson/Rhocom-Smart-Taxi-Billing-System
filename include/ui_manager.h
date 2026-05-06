@@ -15,6 +15,8 @@ typedef enum {
     UI_PAGE_LOGOUT     
 } ui_page_t;
 
+extern ui_page_t current_active_page;
+
 // Maintain original function signatures
 void ui_init(void);
 void ui_manager_handle_touch(m5::touch_detail_t &t);

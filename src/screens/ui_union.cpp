@@ -43,7 +43,7 @@ void ui_union_init(void) {
     
     // Header and Static Title
     ui_create_header();
-    M5.Display.setFont(NULL);
+    M5.Display.setFont(&fonts::FreeSans9pt7b);
     M5.Display.setTextColor(TFT_WHITE);
     M5.Display.drawCenterString("UNION VALIDATION", 160, 45);
 

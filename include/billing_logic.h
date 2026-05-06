@@ -41,6 +41,19 @@ struct PassengerTag {
 extern PassengerTag tags[10];
 // --- 4. CORE BILLING FUNCTIONS ---
 
+// Trip history data structure
+struct TripHistory {
+    int tagId;
+    float startLat, startLon;
+    float endLat, endLon;
+    float fare;
+    uint32_t duration; // in seconds
+    bool isSynced;
+    bool isValid = false; // To check if the slot is occupied
+};
+
+extern TripHistory tripHistory[10]; // Store last 10 trips
+
 // Initialize timers and turn on GPS hardware
 void billing_init(void);
 

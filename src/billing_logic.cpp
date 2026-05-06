@@ -29,6 +29,10 @@ const float WAITING_CHARGE = 10.0;
 const uint32_t FIVE_MINUTES = 300000;
 uint32_t stationaryStartTime[10] = {0};
 
+//Trip History strucure
+TripHistory tripHistory[10];
+int historyIndex = 0;
+
 // =========================
 // GPS STATE CONTROL
 // =========================
@@ -229,6 +233,20 @@ void billing_update_all(void) {
 
 void calculate_final_fare(int slot) {
     if(tags[slot].isActive) {
+
+        // 1. Archive to History
+        tripHistory[historyIndex].tagId = slot + 1;
+        tripHistory[historyIndex].startLat = tags[slot].startLat;
+        tripHistory[historyIndex].startLon = tags[slot].startLon;
+        tripHistory[historyIndex].endLat = tags[slot].lastLat;
+        tripHistory[historyIndex].endLon = tags[slot].lastLon;
+        tripHistory[historyIndex].fare = tags[slot].currentFare;
+        tripHistory[historyIndex].duration = (millis() - tags[slot].startTime) / 1000;
+        tripHistory[historyIndex].isSynced = false;
+        tripHistory[historyIndex].isValid = true;
+
+        historyIndex = (historyIndex + 1) % 10; // Circular buffer
+        
         totalFaresCollectedToday += tags[slot].currentFare;
         tags[slot].isActive = false;
         tags[slot].currentFare = 0;

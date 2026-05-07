@@ -57,13 +57,6 @@ void loop() {
     billing_update_all(); 
     
     driver_handle_hardware(); 
-
-    if (M5.Touch.getCount() > 0) {
-    auto detail = M5.Touch.getDetail();
-    if (detail.wasPressed()) {
-        Serial.printf("Touch Detected at X: %d, Y: %d\n", detail.x, detail.y);
-    }
-}
     
-    vTaskDelay(5); 
+    vTaskDelay(pdMS_TO_TICKS(20)); 
 }

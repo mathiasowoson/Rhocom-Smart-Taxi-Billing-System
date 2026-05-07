@@ -9,6 +9,20 @@
 TinyGsm modem(SerialAT);
 extern SemaphoreHandle_t xSerialSemaphore; // Prevents GPS and Blynk from crashing Serial2
 
+// ThingSpeak Credentials
+#define SECRET_CH_ID 3357569              // Your Channel ID
+#define SECRET_WRITE_APIKEY "5DLLTK7JIVQ75BWF" // Your Write API Key
+
+// TalkBack credentials
+#define SECRET_TALKBACK_ID 56849
+#define SECRET_TALKBACK_KEY "WD74QLONNKXLTJD8"
+
+// ... other existing configs like APN ...
+#define APN "your_sim_apn"
+
+extern bool gpsInitialized;
+// extern unsigned long gpsStartTime;
+
 TinyGsmClient client(modem);
 
 #define MODEM_PWRKEY 4
@@ -38,44 +52,43 @@ void gsmTask(void *pvParameters) {
     vTaskDelay(pdMS_TO_TICKS(5000));
 
     if (xSemaphoreTake(xSerialSemaphore, portMAX_DELAY)) {
-        // 2. MODEM_INIT (Matching your debug code)
-        Serial.println("GSM Task: MODEM RESTART...");
-        modem.restart();
+        Serial.println("GSM Task: Initializing Modem...");
+        modem.restart(); // Software reset to clear old states
         
-        // 3. NETWORK_READY
-        Serial.println("GSM Task: SETTING NETWORK...");
+        // 2. POWER ON GPS EXPLICITLY (AT+CGPS=1,1)
+        Serial.println("GSM Task: Sending AT+CGPS=1,1...");
+        modem.sendAT("+CGPS=1,1"); // Start GPS in Standalone mode
+        if (modem.waitResponse(2000) != 1) {
+             Serial.println("GSM Task: GPS Power-on failed or already on.");
+        }
+        
+        modem.sendAT("+CGPSHOT"); // Attempt Hot Start for faster fix
+        modem.waitResponse();
+        
+        // 3. NETWORK SETUP
+        Serial.println("GSM Task: Connecting to Network...");
         modem.sendAT("+CGACT=1,1");
         modem.waitResponse();
         modem.sendAT("+NETOPEN");
         modem.waitResponse(10000);
 
-        // 4. GPS_ON
-        Serial.println("GSM Task: TURNING GPS ON...");
-        modem.enableGPS();
-        modem.sendAT("+CGPSHOT"); // Hot start
-        modem.waitResponse();
-        modem.sendAT("+CGPSANT=1"); // Antenna Power
-        modem.waitResponse();
+        // 4. THINGSPEAK BEGIN
+        // This must happen AFTER the modem and client are ready
+        ThingSpeak.begin(client); 
 
         // Mark ready for Billing Logic
-        extern bool gpsInitialized;
-        extern unsigned long gpsStartTime;
-        gpsStartTime = millis();
-        gpsInitialized = true;
+        // gpsStartTime = millis();
+        gpsInitialized = true; 
 
-        ThingSpeak.begin(client);
-
-        for (;;) {
-            // We sync every 30 seconds for stability and to respect ThingSpeak limits
-            cloud_gsm_sync();
-             vTaskDelay(pdMS_TO_TICKS(30000)); 
-        }
-        
         xSemaphoreGive(xSerialSemaphore);
     }
 
+    // 5. THE MAIN SYNC LOOP
+    for (;;) {
+        cloud_gsm_sync(); 
+        vTaskDelay(pdMS_TO_TICKS(30000)); // Respect ThingSpeak 15-30s limits
+    }
 }
-
 
 void processCloudCommand(String cmd) {
     cmd.trim(); // Clean up any hidden whitespace
@@ -108,32 +121,45 @@ void processCloudCommand(String cmd) {
 }
 
 void checkTalkBack() {
-    // 1. Send Command to Execute (This fetches and deletes the top command)
-    String url = "api.thingspeak.com/talkbacks/" + String(SECRET_TALKBACK_ID) + "/commands/execute?api_key=" + String(SECRET_TALKBACK_KEY);
+    // We use .json to ensure the response is clean and predictable
+    String url = "http://api.thingspeak.com/talkbacks/" + String(SECRET_TALKBACK_ID) + "/commands/execute?api_key=" + String(SECRET_TALKBACK_KEY);
     
-    // 2. Lock the Serial line
-    if (xSemaphoreTake(xSerialSemaphore, pdMS_TO_TICKS(2000)) == pdTRUE) {
+    // Use a shorter timeout here; we don't want to block GPS for too long
+    if (xSemaphoreTake(xSerialSemaphore, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        
+        Serial.println("TalkBack: Checking for remote commands...");
         
         modem.sendAT("+HTTPINIT");
         modem.waitResponse();
+        
+        // Set URL
         modem.sendAT("+HTTPPARA=\"URL\",\"" + url + "\"");
         modem.waitResponse();
-        modem.sendAT("+HTTPACTION=0"); // GET
         
-        // Wait for the action completion (+HTTPACTION: 0,200,[len])
+        // GET Request (Execute next command)
+        modem.sendAT("+HTTPACTION=0"); 
+        
+        // Wait for server response (200 = OK)
         if (modem.waitResponse(10000, "+HTTPACTION: 0,200,") == 1) {
             String responseLen = SerialAT.readStringUntil('\n');
             int len = responseLen.toInt();
             
             if (len > 0) {
                 modem.sendAT("+HTTPREAD");
+                // The SIM7600 returns "+HTTPREAD: [len]" followed by the data
                 if (modem.waitResponse(5000, "+HTTPREAD: ") == 1) {
-                    String skipHeader = SerialAT.readStringUntil('\n'); // Skip length line
-                    String commandBody = SerialAT.readStringUntil('\n'); // This is your "ADD_PASSENGER"
+                    SerialAT.readStringUntil('\n'); // Skip the length line
+                    String commandBody = SerialAT.readStringUntil('\n'); 
+                    commandBody.trim(); // Remove \r\n
                     
-                    // 3. Process the command using your new logic
+                    Serial.print("TalkBack: Received -> ");
+                    Serial.println(commandBody);
+
+                    // Process: e.g., "ADD_PASSENGER"
                     processCloudCommand(commandBody);
                 }
+            } else {
+                Serial.println("TalkBack: Queue empty.");
             }
         }
         
@@ -145,41 +171,62 @@ void checkTalkBack() {
 }
 
 void cloud_gsm_sync(void) {
+    // 1. Pre-check: Don't even try if the modem isn't connected to the internet.
+    // This prevents the semaphore from being held while the modem struggles with a dead connection.
+    if (!modem.isGprsConnected()) {
+        Serial.println("Cloud: Skipping sync - No GPRS/Data connection.");
+        return; 
+    }
+
+    // 2. Take the Semaphore with a reasonable timeout.
     if (xSemaphoreTake(xSerialSemaphore, pdMS_TO_TICKS(5000)) == pdTRUE) {
         
-        // 1. CALCULATE REVENUE TOTALS
+        // --- 1. CALCULATE REVENUE TOTALS ---
         float activeFares = 0;
         for(int i = 0; i < 10; i++) {
             if(tags[i].isActive) activeFares += tags[i].currentFare;
         }
         float grossPassengerFares = totalFaresCollectedToday + activeFares;
         float driverNetEarn = grossPassengerFares - dailyUnionTotal;
-        float grandTotal = grossPassengerFares + dailyUnionTotal;
+        float grandTotal = grossPassengerFares;
 
-        // 2. SET THINGSPEAK FIELDS
+        // --- 2. SET THINGSPEAK FIELDS ---
         ThingSpeak.setField(1, grandTotal);
         ThingSpeak.setField(2, driverNetEarn);
-        ThingSpeak.setField(3, grossPassengerFares);
+        if (grossPassengerFares > 0) ThingSpeak.setField(3, grossPassengerFares);
         ThingSpeak.setField(4, dailyUnionTotal);
         ThingSpeak.setField(5, (float)validCheckinsToday);
         ThingSpeak.setField(6, fuelPrice);
         ThingSpeak.setField(7, kmlEfficiency);
 
-        // 3. SET GPS LOCATION (For the Map Widget)
+        // --- 3. SET GPS LOCATION ---
+        // Note: We are already holding the semaphore, so get_gps_data 
+        // inside billing_logic needs to be careful not to take it again (Deadlock).
+        // It is safer to use the global 'gpsSpeed' and stored coordinates here.
         float flat, flon, fspeed;
         if(get_gps_data(flat, flon, fspeed)) {
             ThingSpeak.setLatitude(flat);
             ThingSpeak.setLongitude(flon);
         }
 
-        // 4. WRITE TO CLOUD
+        // --- 4. WRITE TO CLOUD ---
+        Serial.println("Cloud: Sending data to ThingSpeak...");
         int x = ThingSpeak.writeFields(SECRET_CH_ID, SECRET_WRITE_APIKEY);
-        if(x == 200) Serial.println("Cloud: Update Successful.");
+        
+        if(x == 200) {
+            Serial.println("Cloud: Update Successful.");
+        } else {
+            Serial.printf("Cloud: Update Failed (Error %d). Check API Key or Data.\n", x);
+        }
 
-        // 5. CHECK TALKBACK COMMANDS
+        // --- 5. CHECK TALKBACK COMMANDS ---
+        // This function must NOT take the semaphore again internally.
         checkTalkBack();
 
+        // 6. Release the line for the Billing/GPS logic
         xSemaphoreGive(xSerialSemaphore);
+    } else {
+        Serial.println("Cloud: Sync deferred - GPS logic is currently using the Modem.");
     }
 }
 

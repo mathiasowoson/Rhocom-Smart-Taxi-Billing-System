@@ -39,7 +39,7 @@ int historyIndex = 0;
 // GPS STATE CONTROL
 // =========================
  bool gpsInitialized = false;
- unsigned long gpsStartTime = 0;
+//  unsigned long gpsStartTime = 0;
 
 
 // =========================
@@ -48,49 +48,34 @@ int historyIndex = 0;
 bool get_gps_data(float &lat, float &lon, float &speed) {
     if (!gpsInitialized) return false;
 
-    // 1. Take the Semaphore to lock out Blynk
-    if (xSemaphoreTake(xSerialSemaphore, pdMS_TO_TICKS(2000)) == pdTRUE) {
-        
+    // 1. Try to get the line
+    if (xSemaphoreTake(xSerialSemaphore, pdMS_TO_TICKS(500)) == pdTRUE) {
         float alt;
         int dummySats;
         
-        // 2. Get the standard data from the TinyGSM library
-        // This handles the heavy lifting of parsing the basic coordinates
+        // 2. Ask modem for data
         bool ok = modem.getGPS(&lat, &lon, &speed, &alt, &dummySats);
 
-        // 3. MANUAL FIX: Raw AT command for logs/satellite info
-        // We use SerialAT directly to avoid the 'readResponseUntil' error
-        modem.sendAT("+CGPSINFO");
-        
-        String res = "";
-        uint32_t startWait = millis();
-        
-        // Wait up to 200ms for a response from the SIM7600
-        while (millis() - startWait < 200) {
-            while (SerialAT.available()) {
-                char c = SerialAT.read();
-                res += c;
-            }
-            if (res.indexOf("OK") != -1) break; 
-        }
-
-        // 4. Release the line so Blynk can send its heartbeats
+        // 3. Release the line immediately so other tasks can use it
         xSemaphoreGive(xSerialSemaphore);
 
-        // 5. Validation for Production
+        // 4. Debug Printing
         if (ok && lat != 0.0) {
-            // Optional: You could log 'res' here for debugging satellite count
-            // Serial.println("Raw GPS Info: " + res);
+            // Print the data you requested to see
+            Serial.printf(">>> GPS FIX: Lat: %.6f | Lon: %.6f | Speed: %.1f km/h | Sats: %d\n", 
+                          lat, lon, speed, dummySats);
             return true;
+        } else {
+            // This prints if the modem is communicating but hasn't found satellites yet
+            static uint32_t lastNoFixMsg = 0;
+            if (millis() - lastNoFixMsg > 5000) { // Limit prints to every 5 seconds
+                Serial.println(">>> GPS: Searching for Satellites...");
+                lastNoFixMsg = millis();
+            }
         }
-        
     } else {
-        // Log this less often to avoid Serial clutter during high Blynk activity
-        static uint32_t lastBlockMsg = 0;
-        if (millis() - lastBlockMsg > 20000) {
-            Serial.println(">>> GPS: SEMAPHORE TIMEOUT - Blynk is hogging Serial");
-            lastBlockMsg = millis();
-        }
+        // This prints if the Cloud Sync task is currently using the modem
+        Serial.println(">>> GPS: Waiting for Serial line (Busy)...");
     }
     
     return false;
